@@ -122,3 +122,54 @@ So in one real request, `IEventPublisher` is used at two levels:
 2. Service/business level (`OrderPlacedEvent`) for order-domain reactions.
 
 This is why it is a strong observability boundary: one central dispatcher captures multiple side effects without putting cross-cutting code directly inside the controller.
+
+## 3) Where the Code Makes Observability Easy vs Hard
+
+### Where it is easy
+
+1. HTTP entry and pipeline composition are centralized  
+   It is easy to add baseline request telemetry because the app starts in one place (`src/Presentation/Nop.Web/Program.cs`) and then delegates to one pipeline method (`ConfigureRequestPipeline`). This gives a clean top-level instrumentation point.
+
+2. Middleware ordering is explicit and deterministic  
+   nopCommerce uses ordered `INopStartup` implementations discovered by `NopEngine`. Since startup components are sorted by `Order`, it is straightforward to place spans around routing/auth/authorization/endpoints with predictable execution order (`src/Libraries/Nop.Core/Infrastructure/NopEngine.cs`, `src/Presentation/Nop.Web.Framework/Infrastructure/NopRoutingStartup.cs`, `src/Presentation/Nop.Web.Framework/Infrastructure/AuthenticationStartup.cs`, `src/Presentation/Nop.Web.Framework/Infrastructure/AuthorizationStartup.cs`, `src/Presentation/Nop.Web.Framework/Infrastructure/NopEndpoints.cs`).
+
+3. Repository layer gives a strong infrastructure boundary  
+   `EntityRepository` centralizes CRUD methods (`InsertAsync`, `UpdateAsync`, `DeleteAsync`) and already triggers entity lifecycle events from the same methods. That makes it easy to add DB-adjacent spans and counters once, instead of editing many services (`src/Libraries/Nop.Data/EntityRepository.cs`).
+
+4. Event dispatch is centralized in one class  
+   `EventPublisher` is a single internal event fan-out point. Instrumenting this one class gives visibility into many downstream consumers without touching each domain service (`src/Libraries/Nop.Services/Events/EventPublisher.cs`). It is also easy to find in DI (`services.AddSingleton<IEventPublisher, EventPublisher>();` in `src/Presentation/Nop.Web.Framework/Infrastructure/NopStartup.cs`).
+
+5. Outbound HTTP clients are registered centrally  
+   External calls are created through `AddNopHttpClients`, so HTTP client instrumentation can be enabled from one registration boundary (`src/Presentation/Nop.Web.Framework/Infrastructure/Extensions/ServiceCollectionExtensions.cs`, `src/Presentation/Nop.Web.Framework/Infrastructure/NopCommonStartup.cs`).
+
+### Where it is hard
+
+1. Runtime reflection and dynamic loading reduce static visibility  
+   The engine and type finder discover components at runtime (`FindClassesOfType`, assembly scanning/loading), and plugins are loaded dynamically into MVC application parts. This makes it harder to know all active code paths before runtime (`src/Libraries/Nop.Core/Infrastructure/NopEngine.cs`, `src/Libraries/Nop.Core/Infrastructure/WebAppTypeFinder.cs`, `src/Presentation/Nop.Web.Framework/Infrastructure/Extensions/ApplicationPartManagerExtensions.cs`).
+
+2. Event consumers are discovered dynamically  
+   Consumers are registered by scanning `IConsumer<>` implementations. This is flexible, but it means fan-out can change based on loaded plugins/modules, which complicates predictable telemetry coverage (`src/Presentation/Nop.Web.Framework/Infrastructure/NopStartup.cs`).
+
+3. Event dispatch swallows consumer exceptions  
+   In `EventPublisher`, consumer exceptions are caught and logged, and dispatch continues. Operationally this is resilient, but it can hide failure impact unless we add explicit per-consumer telemetry (`src/Libraries/Nop.Services/Events/EventPublisher.cs`).
+
+4. Logging pipeline is custom and DB-oriented  
+   Logging goes through custom `Nop.Services.Logging.ILogger` / `DefaultLogger` and persists to the `Log` entity. This is useful for app logs, but harder to correlate with distributed traces than a standard structured OTel-first log pipeline (`src/Libraries/Nop.Services/Logging/ILogger.cs`, `src/Libraries/Nop.Services/Logging/DefaultLogger.cs`).
+
+5. No existing OTel primitives in app code  
+   A code search shows no existing `OpenTelemetry`, `ActivitySource`, or `Meter` usage in `src`, so observability must be introduced from scratch rather than extended.
+
+Overall, the architecture is favorable for a surgical instrumentation strategy: instrument boundaries (`Program`, repository, event publisher, HTTP clients) rather than refactoring deep business logic.
+
+## 4) Structural Changes Needed to Instrument Properly (and Is It Worth It?)
+
+To instrument nopCommerce properly and considering everything I've seen, I would make one focused structural change: introduce a small observability layer at infrastructure boundaries instead of spreading tracing code across many business services.
+### Recommended structural change
+
+1. Add centralized telemetry primitives (`ActivitySource`, `Meter`) in a shared location (for example under `Nop.Core` or `Nop.Web.Framework` infrastructure).
+2. Wire OpenTelemetry once at composition root (`src/Presentation/Nop.Web/Program.cs`) so HTTP inbound/outbound and custom sources are registered centrally.
+3. Add boundary instrumentation where coverage is broad and low-risk:
+   - `EntityRepository` (`src/Libraries/Nop.Data/EntityRepository.cs`) for CRUD spans/counters.
+   - `EventPublisher` (`src/Libraries/Nop.Services/Events/EventPublisher.cs`) for publish latency, consumer count, and consumer failure metrics.
+4. Add sanitization before export (processor/filter) to avoid leaking PII from orders/customers, aligned with the assignment hint.
+5. Add trace/log correlation fields to the custom logger path (`src/Libraries/Nop.Services/Logging/DefaultLogger.cs`) so errors in logs can be linked to traces.

@@ -1,10 +1,12 @@
-﻿using System.Linq.Expressions;
+﻿using System.Diagnostics;
+using System.Linq.Expressions;
 using System.Transactions;
 using Nop.Core;
 using Nop.Core.Caching;
 using Nop.Core.Configuration;
 using Nop.Core.Domain.Common;
 using Nop.Core.Events;
+using Nop.Core.Observability;
 
 namespace Nop.Data;
 
@@ -332,6 +334,23 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
         return await query.ToPagedListAsync(pageIndex, pageSize, getOnlyTotalCount);
     }
 
+    protected static Activity StartRepositoryActivity(string operation, bool publishEvent)
+    {
+        var activity = NopTelemetry.ActivitySource.StartActivity($"nop.repository.{operation}", ActivityKind.Internal);
+        activity?.SetTag("nop.entity.type", typeof(TEntity).Name);
+        activity?.SetTag("nop.publish_event", publishEvent);
+        return activity;
+    }
+
+    protected static void MarkActivityFailed(Activity activity)
+    {
+        if (activity == null)
+            return;
+
+        activity.SetStatus(ActivityStatusCode.Error);
+        activity.AddEvent(new ActivityEvent("exception"));
+    }
+
     /// <summary>
     /// Insert the entity entry
     /// </summary>
@@ -342,11 +361,21 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
     {
         ArgumentNullException.ThrowIfNull(entity);
 
-        await _dataProvider.InsertEntityAsync(entity);
+        using var activity = StartRepositoryActivity("insert", publishEvent);
 
-        //event notification
-        if (publishEvent)
-            await _eventPublisher.EntityInsertedAsync(entity);
+        try
+        {
+            await _dataProvider.InsertEntityAsync(entity);
+
+            //event notification
+            if (publishEvent)
+                await _eventPublisher.EntityInsertedAsync(entity);
+        }
+        catch
+        {
+            MarkActivityFailed(activity);
+            throw;
+        }
     }
 
     /// <summary>
@@ -359,16 +388,26 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
     {
         ArgumentNullException.ThrowIfNull(entities);
 
-        using var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
-        await _dataProvider.BulkInsertEntitiesAsync(entities);
-        transaction.Complete();
+        using var activity = StartRepositoryActivity("insert", publishEvent);
 
-        if (!publishEvent)
-            return;
+        try
+        {
+            using var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
+            await _dataProvider.BulkInsertEntitiesAsync(entities);
+            transaction.Complete();
 
-        //event notification
-        foreach (var entity in entities)
-            await _eventPublisher.EntityInsertedAsync(entity);
+            if (!publishEvent)
+                return;
+
+            //event notification
+            foreach (var entity in entities)
+                await _eventPublisher.EntityInsertedAsync(entity);
+        }
+        catch
+        {
+            MarkActivityFailed(activity);
+            throw;
+        }
     }
 
     /// <summary>
@@ -395,11 +434,21 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
     {
         ArgumentNullException.ThrowIfNull(entity);
 
-        await _dataProvider.UpdateEntityAsync(entity);
+        using var activity = StartRepositoryActivity("update", publishEvent);
 
-        //event notification
-        if (publishEvent)
-            await _eventPublisher.EntityUpdatedAsync(entity);
+        try
+        {
+            await _dataProvider.UpdateEntityAsync(entity);
+
+            //event notification
+            if (publishEvent)
+                await _eventPublisher.EntityUpdatedAsync(entity);
+        }
+        catch
+        {
+            MarkActivityFailed(activity);
+            throw;
+        }
     }
 
     /// <summary>
@@ -415,14 +464,24 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
         if (!entities.Any())
             return;
 
-        await _dataProvider.UpdateEntitiesAsync(entities);
+        using var activity = StartRepositoryActivity("update", publishEvent);
 
-        //event notification
-        if (!publishEvent)
-            return;
+        try
+        {
+            await _dataProvider.UpdateEntitiesAsync(entities);
 
-        foreach (var entity in entities)
-            await _eventPublisher.EntityUpdatedAsync(entity);
+            //event notification
+            if (!publishEvent)
+                return;
+
+            foreach (var entity in entities)
+                await _eventPublisher.EntityUpdatedAsync(entity);
+        }
+        catch
+        {
+            MarkActivityFailed(activity);
+            throw;
+        }
     }
 
     /// <summary>
@@ -435,21 +494,31 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
     {
         ArgumentNullException.ThrowIfNull(entity);
 
-        switch (entity)
+        using var activity = StartRepositoryActivity("delete", publishEvent);
+
+        try
         {
-            case ISoftDeletedEntity softDeletedEntity:
-                softDeletedEntity.Deleted = true;
-                await _dataProvider.UpdateEntityAsync(entity);
-                break;
+            switch (entity)
+            {
+                case ISoftDeletedEntity softDeletedEntity:
+                    softDeletedEntity.Deleted = true;
+                    await _dataProvider.UpdateEntityAsync(entity);
+                    break;
 
-            default:
-                await _dataProvider.DeleteEntityAsync(entity);
-                break;
+                default:
+                    await _dataProvider.DeleteEntityAsync(entity);
+                    break;
+            }
+
+            //event notification
+            if (publishEvent)
+                await _eventPublisher.EntityDeletedAsync(entity);
         }
-
-        //event notification
-        if (publishEvent)
-            await _eventPublisher.EntityDeletedAsync(entity);
+        catch
+        {
+            MarkActivityFailed(activity);
+            throw;
+        }
     }
 
     /// <summary>
@@ -465,26 +534,36 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
         if (!entities.Any())
             return;
 
-        using var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
+        using var activity = StartRepositoryActivity("delete", publishEvent);
 
-        if (typeof(TEntity).GetInterface(nameof(ISoftDeletedEntity)) == null)
-            await _dataProvider.BulkDeleteEntitiesAsync(entities);
-        else
+        try
         {
+            using var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
+
+            if (typeof(TEntity).GetInterface(nameof(ISoftDeletedEntity)) == null)
+                await _dataProvider.BulkDeleteEntitiesAsync(entities);
+            else
+            {
+                foreach (var entity in entities)
+                    ((ISoftDeletedEntity)entity).Deleted = true;
+
+                await _dataProvider.UpdateEntitiesAsync(entities);
+            }
+
+            transaction.Complete();
+
+            //event notification
+            if (!publishEvent)
+                return;
+
             foreach (var entity in entities)
-                ((ISoftDeletedEntity)entity).Deleted = true;
-
-            await _dataProvider.UpdateEntitiesAsync(entities);
+                await _eventPublisher.EntityDeletedAsync(entity);
         }
-
-        transaction.Complete();
-
-        //event notification
-        if (!publishEvent)
-            return;
-
-        foreach (var entity in entities)
-            await _eventPublisher.EntityDeletedAsync(entity);
+        catch
+        {
+            MarkActivityFailed(activity);
+            throw;
+        }
     }
 
     /// <summary>
@@ -499,11 +578,21 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
     {
         ArgumentNullException.ThrowIfNull(predicate);
 
-        using var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
-        var countDeletedRecords = await _dataProvider.BulkDeleteEntitiesAsync(predicate);
-        transaction.Complete();
+        using var activity = StartRepositoryActivity("delete", publishEvent: false);
 
-        return countDeletedRecords;
+        try
+        {
+            using var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
+            var countDeletedRecords = await _dataProvider.BulkDeleteEntitiesAsync(predicate);
+            transaction.Complete();
+
+            return countDeletedRecords;
+        }
+        catch
+        {
+            MarkActivityFailed(activity);
+            throw;
+        }
     }
 
     /// <summary>
