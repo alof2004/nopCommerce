@@ -11,6 +11,7 @@ services:
     ports:
       - "4317:4317"
       - "4318:4318"
+      - "8889:8889"
     volumes:
       - ./observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
 
@@ -28,6 +29,7 @@ services:
     image: grafana/grafana:12.4.1
     depends_on:
       - tempo
+      - prometheus
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
@@ -36,6 +38,15 @@ services:
     volumes:
       - ./observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - grafana-data:/var/lib/grafana
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    depends_on:
+      - otel-collector
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
 
 volumes:
   grafana-data:

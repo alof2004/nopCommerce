@@ -52,6 +52,7 @@ using Nop.Services.Themes;
 using Nop.Services.Topics;
 using Nop.Services.Vendors;
 using Nop.Web.Framework.Factories;
+using Nop.Web.Framework.Infrastructure.Observability;
 using Nop.Web.Framework.Menu;
 using Nop.Web.Framework.Mvc.Routing;
 using Nop.Web.Framework.Themes;
@@ -195,7 +196,8 @@ public partial class NopStartup : INopStartup
         services.AddScoped<IGiftCardService, GiftCardService>();
         services.AddScoped<IOrderService, OrderService>();
         services.AddScoped<IOrderReportService, OrderReportService>();
-        services.AddScoped<IOrderProcessingService, OrderProcessingService>();
+        services.AddScoped<OrderProcessingService>();
+        services.AddScoped<IOrderProcessingService, ObservedOrderProcessingService>();
         services.AddScoped<IOrderTotalCalculationService, OrderTotalCalculationService>();
         services.AddScoped<IReturnRequestService, ReturnRequestService>();
         services.AddScoped<IRewardPointService, RewardPointService>();

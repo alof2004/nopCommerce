@@ -14,6 +14,8 @@ exporters:
     endpoint: tempo:4317
     tls:
       insecure: true
+  prometheus:
+    endpoint: 0.0.0.0:8889
 
 extensions:
   health_check:
@@ -29,3 +31,10 @@ service:
         - batch
       exporters:
         - otlp_grpc/tempo
+    metrics:
+      receivers:
+        - otlp
+      processors:
+        - batch
+      exporters:
+        - prometheus

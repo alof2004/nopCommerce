@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Nop.Core.Observability;
+using Nop.Web.Infrastructure.Observability;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
@@ -37,18 +39,31 @@ public static class OpenTelemetryServiceCollectionExtensions
             .WithTracing(tracing =>
             {
                 tracing
+                    .AddProcessor(new SensitiveActivitySanitizingProcessor())
                     .AddSource(NopTelemetry.ActivitySourceName)
                     .AddAspNetCoreInstrumentation(options =>
                     {
-                        options.RecordException = true;
+                        options.RecordException = false;
                         options.Filter = context => !IsStaticAssetRequest(context.Request.Path);
                     })
-                    .AddHttpClientInstrumentation(options => options.RecordException = true);
+                    .AddHttpClientInstrumentation(options => options.RecordException = false);
 
                 if (!string.IsNullOrWhiteSpace(otlpEndpoint))
                     tracing.AddOtlpExporter();
                 else if (environment.IsDevelopment())
                     tracing.AddConsoleExporter();
+            })
+            .WithMetrics(metrics =>
+            {
+                metrics
+                    .AddMeter(NopTelemetry.MeterName)
+                    .AddAspNetCoreInstrumentation()
+                    .AddHttpClientInstrumentation();
+
+                if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+                    metrics.AddOtlpExporter();
+                else if (environment.IsDevelopment())
+                    metrics.AddConsoleExporter();
             });
 
         return services;

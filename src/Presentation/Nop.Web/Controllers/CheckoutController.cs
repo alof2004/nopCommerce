@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using System.Diagnostics;
+using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using Nop.Core;
 using Nop.Core.Domain.Common;
@@ -9,6 +10,7 @@ using Nop.Core.Domain.Security;
 using Nop.Core.Domain.Shipping;
 using Nop.Core.Domain.Tax;
 using Nop.Core.Http;
+using Nop.Core.Observability;
 using Nop.Services.Attributes;
 using Nop.Services.Catalog;
 using Nop.Services.Common;
@@ -1277,6 +1279,8 @@ public partial class CheckoutController : BasePublicController
     [HttpPost, ActionName("Confirm")]
     public virtual async Task<IActionResult> ConfirmOrder(bool captchaValid)
     {
+        BeginCheckoutRequestTelemetry(NopTelemetry.CheckoutModeStandard);
+
         //validation
         if (_orderSettings.CheckoutDisabled)
             return RedirectToRoute(NopRouteNames.General.CART);
@@ -1303,6 +1307,7 @@ public partial class CheckoutController : BasePublicController
         //captcha validation for guest customers
         if (isCaptchaSettingEnabled && !captchaValid)
         {
+            RecordCheckoutRequestFailure("prepare", "captcha");
             model.Warnings.Add(await _localizationService.GetResourceAsync("Common.WrongCaptchaMessage"));
             return View(model);
         }
@@ -1311,7 +1316,10 @@ public partial class CheckoutController : BasePublicController
         {
             //prevent 2 orders being placed within an X seconds time frame
             if (!await IsMinimumOrderPlacementIntervalValidAsync(customer))
+            {
+                RecordCheckoutRequestFailure("prepare", "minimum_interval");
                 throw new Exception(await _localizationService.GetResourceAsync("Checkout.MinOrderPlacementInterval"));
+            }
 
             //place order
             var processPaymentRequest = await _orderProcessingService.GetProcessPaymentRequestAsync();
@@ -1332,6 +1340,7 @@ public partial class CheckoutController : BasePublicController
             var placeOrderResult = await _orderProcessingService.PlaceOrderAsync(processPaymentRequest);
             if (placeOrderResult.Success)
             {
+                MarkCheckoutRequestSuccess();
                 await _orderProcessingService.SetProcessPaymentRequestAsync(null);
 
                 var postProcessPaymentRequest = new PostProcessPaymentRequest
@@ -1349,11 +1358,14 @@ public partial class CheckoutController : BasePublicController
                 return RedirectToRoute(NopRouteNames.Standard.CHECKOUT_COMPLETED, new { orderId = placeOrderResult.PlacedOrder.Id });
             }
 
+            EnsureCheckoutRequestFailure("finalize", "unknown", false);
+
             foreach (var error in placeOrderResult.Errors)
                 model.Warnings.Add(error);
         }
         catch (Exception exc)
         {
+            EnsureCheckoutRequestFailure("finalize", "unknown");
             await _logger.WarningAsync(exc.Message, exc);
             model.Warnings.Add(exc.Message);
         }
@@ -2018,6 +2030,8 @@ public partial class CheckoutController : BasePublicController
     [HttpPost]
     public virtual async Task<IActionResult> OpcConfirmOrder(bool captchaValid)
     {
+        BeginCheckoutRequestTelemetry(NopTelemetry.CheckoutModeOpc);
+
         try
         {
             var customer = await _workContext.GetCurrentCustomerAsync();
@@ -2051,7 +2065,10 @@ public partial class CheckoutController : BasePublicController
 
                 //prevent 2 orders being placed within an X seconds time frame
                 if (!await IsMinimumOrderPlacementIntervalValidAsync(customer))
+                {
+                    RecordCheckoutRequestFailure("prepare", "minimum_interval");
                     throw new Exception(await _localizationService.GetResourceAsync("Checkout.MinOrderPlacementInterval"));
+                }
 
                 //place order
                 var processPaymentRequest = await _orderProcessingService.GetProcessPaymentRequestAsync();
@@ -2072,6 +2089,7 @@ public partial class CheckoutController : BasePublicController
                 var placeOrderResult = await _orderProcessingService.PlaceOrderAsync(processPaymentRequest);
                 if (placeOrderResult.Success)
                 {
+                    MarkCheckoutRequestSuccess();
                     await _orderProcessingService.SetProcessPaymentRequestAsync(null);
                     var postProcessPaymentRequest = new PostProcessPaymentRequest
                     {
@@ -2105,9 +2123,14 @@ public partial class CheckoutController : BasePublicController
                 //error
                 foreach (var error in placeOrderResult.Errors)
                     confirmOrderModel.Warnings.Add(error);
+
+                EnsureCheckoutRequestFailure("finalize", "unknown", false);
             }
             else
+            {
+                RecordCheckoutRequestFailure("prepare", "captcha");
                 confirmOrderModel.Warnings.Add(await _localizationService.GetResourceAsync("Common.WrongCaptchaMessage"));
+            }
 
             return Json(new
             {
@@ -2121,6 +2144,7 @@ public partial class CheckoutController : BasePublicController
         }
         catch (Exception exc)
         {
+            EnsureCheckoutRequestFailure("finalize", "unknown");
             await _logger.WarningAsync(exc.Message, exc, await _workContext.GetCurrentCustomerAsync());
             return Json(new { error = 1, message = exc.Message });
         }
@@ -2183,4 +2207,34 @@ public partial class CheckoutController : BasePublicController
     }
 
     #endregion
+
+    protected static void BeginCheckoutRequestTelemetry(string checkoutMode)
+    {
+        NopTelemetry.SetCheckoutMode(checkoutMode);
+        NopTelemetry.SetCheckoutModeTag(Activity.Current, checkoutMode);
+    }
+
+    protected static void MarkCheckoutRequestSuccess()
+    {
+        NopTelemetry.SetCheckoutResult(Activity.Current, NopTelemetry.CheckoutResultSuccess);
+    }
+
+    protected static void RecordCheckoutRequestFailure(string stage, string reasonCode, bool recordMetric = true)
+    {
+        var activity = Activity.Current;
+        NopTelemetry.SetCheckoutFailure(activity, stage, reasonCode);
+        activity?.SetStatus(ActivityStatusCode.Error);
+
+        if (recordMetric)
+            NopTelemetry.RecordCheckoutFailure(NopTelemetry.GetCheckoutMode(), stage, reasonCode);
+    }
+
+    protected static void EnsureCheckoutRequestFailure(string stage, string reasonCode, bool recordMetric = true)
+    {
+        var currentReasonCode = Activity.Current?.GetTagItem(NopTelemetry.CheckoutFailureReasonTag) as string;
+        if (!string.IsNullOrWhiteSpace(currentReasonCode))
+            return;
+
+        RecordCheckoutRequestFailure(stage, reasonCode, recordMetric);
+    }
 }
