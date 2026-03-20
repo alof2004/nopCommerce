@@ -2,6 +2,8 @@ services:
     nopcommerce_web:
         build: .
         container_name: nopcommerce
+        environment:
+            InstallationConfig__InstallRegionalResources: ${INSTALLATION_CONFIG__INSTALL_REGIONAL_RESOURCES:-}
         ports:
             - "80:80"
         depends_on:
