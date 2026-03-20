@@ -22,10 +22,10 @@ public class ObservedOrderProcessingService : IOrderProcessingService
 
     public virtual async Task<PlaceOrderResult> PlaceOrderAsync(ProcessPaymentRequest processPaymentRequest)
     {
-        var checkoutMode = NopTelemetry.GetCheckoutMode();
+        var checkoutMode = CheckoutTelemetry.GetMode();
 
-        using var checkoutActivity = NopTelemetry.StartCheckoutActivity("nop.checkout.place_order", checkoutMode, "place_order");
-        NopTelemetry.SetCheckoutResult(checkoutActivity, NopTelemetry.CheckoutResultSuccess);
+        using var checkoutActivity = CheckoutTelemetry.StartActivity("nop.checkout.place_order", checkoutMode, "place_order");
+        CheckoutTelemetry.SetResult(checkoutActivity, CheckoutTelemetry.ResultSuccess);
 
         if (!string.IsNullOrWhiteSpace(processPaymentRequest?.PaymentMethodSystemName))
             checkoutActivity?.SetTag("payment.method.system", processPaymentRequest.PaymentMethodSystemName);
@@ -36,7 +36,7 @@ public class ObservedOrderProcessingService : IOrderProcessingService
 
             if (!result.Success)
             {
-                NopTelemetry.SetCheckoutResult(checkoutActivity, NopTelemetry.CheckoutResultFailure);
+                CheckoutTelemetry.SetResult(checkoutActivity, CheckoutTelemetry.ResultFailure);
                 checkoutActivity?.SetStatus(ActivityStatusCode.Error);
             }
 
@@ -44,7 +44,7 @@ public class ObservedOrderProcessingService : IOrderProcessingService
         }
         catch
         {
-            NopTelemetry.SetCheckoutResult(checkoutActivity, NopTelemetry.CheckoutResultFailure);
+            CheckoutTelemetry.SetResult(checkoutActivity, CheckoutTelemetry.ResultFailure);
             checkoutActivity?.SetStatus(ActivityStatusCode.Error);
             throw;
         }

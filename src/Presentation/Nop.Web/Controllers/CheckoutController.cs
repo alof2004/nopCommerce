@@ -1279,7 +1279,7 @@ public partial class CheckoutController : BasePublicController
     [HttpPost, ActionName("Confirm")]
     public virtual async Task<IActionResult> ConfirmOrder(bool captchaValid)
     {
-        BeginCheckoutRequestTelemetry(NopTelemetry.CheckoutModeStandard);
+        BeginCheckoutRequestTelemetry(CheckoutTelemetry.ModeStandard);
 
         //validation
         if (_orderSettings.CheckoutDisabled)
@@ -2030,7 +2030,7 @@ public partial class CheckoutController : BasePublicController
     [HttpPost]
     public virtual async Task<IActionResult> OpcConfirmOrder(bool captchaValid)
     {
-        BeginCheckoutRequestTelemetry(NopTelemetry.CheckoutModeOpc);
+        BeginCheckoutRequestTelemetry(CheckoutTelemetry.ModeOpc);
 
         try
         {
@@ -2210,28 +2210,28 @@ public partial class CheckoutController : BasePublicController
 
     protected static void BeginCheckoutRequestTelemetry(string checkoutMode)
     {
-        NopTelemetry.SetCheckoutMode(checkoutMode);
-        NopTelemetry.SetCheckoutModeTag(Activity.Current, checkoutMode);
+        CheckoutTelemetry.SetMode(checkoutMode);
+        CheckoutTelemetry.SetModeTag(Activity.Current, checkoutMode);
     }
 
     protected static void MarkCheckoutRequestSuccess()
     {
-        NopTelemetry.SetCheckoutResult(Activity.Current, NopTelemetry.CheckoutResultSuccess);
+        CheckoutTelemetry.SetResult(Activity.Current, CheckoutTelemetry.ResultSuccess);
     }
 
     protected static void RecordCheckoutRequestFailure(string stage, string reasonCode, bool recordMetric = true)
     {
         var activity = Activity.Current;
-        NopTelemetry.SetCheckoutFailure(activity, stage, reasonCode);
+        CheckoutTelemetry.SetFailure(activity, stage, reasonCode);
         activity?.SetStatus(ActivityStatusCode.Error);
 
         if (recordMetric)
-            NopTelemetry.RecordCheckoutFailure(NopTelemetry.GetCheckoutMode(), stage, reasonCode);
+            CheckoutTelemetry.RecordFailure(CheckoutTelemetry.GetMode(), stage, reasonCode);
     }
 
     protected static void EnsureCheckoutRequestFailure(string stage, string reasonCode, bool recordMetric = true)
     {
-        var currentReasonCode = Activity.Current?.GetTagItem(NopTelemetry.CheckoutFailureReasonTag) as string;
+        var currentReasonCode = Activity.Current?.GetTagItem(CheckoutTelemetry.FailureReasonTag) as string;
         if (!string.IsNullOrWhiteSpace(currentReasonCode))
             return;
 

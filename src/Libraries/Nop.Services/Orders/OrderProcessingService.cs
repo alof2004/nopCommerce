@@ -1573,7 +1573,7 @@ public partial class OrderProcessingService : IOrderProcessingService
         if (processPaymentRequest.OrderGuid == Guid.Empty)
             throw new Exception("Order GUID is not generated");
 
-        var checkoutMode = NopTelemetry.GetCheckoutMode();
+        var checkoutMode = CheckoutTelemetry.GetMode();
         var checkoutActivity = Activity.Current;
 
         static string GetFailureReasonCode(string stage, Exception exception)
@@ -1593,21 +1593,21 @@ public partial class OrderProcessingService : IOrderProcessingService
 
         void MarkCheckoutFailure(Activity failedActivity, string stage, string reasonCode, bool recordMetric = true)
         {
-            NopTelemetry.SetCheckoutFailure(failedActivity, stage, reasonCode);
+            CheckoutTelemetry.SetFailure(failedActivity, stage, reasonCode);
             failedActivity?.SetStatus(ActivityStatusCode.Error);
             failedActivity?.AddEvent(new ActivityEvent("exception"));
 
-            NopTelemetry.SetCheckoutFailure(checkoutActivity, stage, reasonCode);
+            CheckoutTelemetry.SetFailure(checkoutActivity, stage, reasonCode);
             checkoutActivity?.SetStatus(ActivityStatusCode.Error);
 
             if (recordMetric)
-                NopTelemetry.RecordCheckoutFailure(checkoutMode, stage, reasonCode);
+                CheckoutTelemetry.RecordFailure(checkoutMode, stage, reasonCode);
         }
 
         async Task<T> RunCheckoutStageAsync<T>(string stage, Func<Task<T>> action, string paymentMethodSystemName = null)
         {
-            using var stageActivity = NopTelemetry.StartCheckoutActivity($"nop.checkout.{stage}", checkoutMode, stage);
-            NopTelemetry.SetCheckoutResult(stageActivity, NopTelemetry.CheckoutResultSuccess);
+            using var stageActivity = CheckoutTelemetry.StartActivity($"nop.checkout.{stage}", checkoutMode, stage);
+            CheckoutTelemetry.SetResult(stageActivity, CheckoutTelemetry.ResultSuccess);
 
             if (!string.IsNullOrWhiteSpace(paymentMethodSystemName))
                 stageActivity?.SetTag("payment.method.system", paymentMethodSystemName);
@@ -1617,23 +1617,23 @@ public partial class OrderProcessingService : IOrderProcessingService
             try
             {
                 var result = await action();
-                NopTelemetry.RecordCheckoutStageDuration(stopwatch.Elapsed.TotalMilliseconds, checkoutMode, stage,
-                    NopTelemetry.CheckoutResultSuccess, paymentMethodSystemName);
+                CheckoutTelemetry.RecordStageDuration(stopwatch.Elapsed.TotalMilliseconds, checkoutMode, stage,
+                    CheckoutTelemetry.ResultSuccess, paymentMethodSystemName);
                 return result;
             }
             catch (Exception exception)
             {
                 MarkCheckoutFailure(stageActivity, stage, GetFailureReasonCode(stage, exception));
-                NopTelemetry.RecordCheckoutStageDuration(stopwatch.Elapsed.TotalMilliseconds, checkoutMode, stage,
-                    NopTelemetry.CheckoutResultFailure, paymentMethodSystemName);
+                CheckoutTelemetry.RecordStageDuration(stopwatch.Elapsed.TotalMilliseconds, checkoutMode, stage,
+                    CheckoutTelemetry.ResultFailure, paymentMethodSystemName);
                 throw;
             }
         }
 
         async Task RunCheckoutStageBlockAsync(string stage, Func<Task> action, string paymentMethodSystemName = null)
         {
-            using var stageActivity = NopTelemetry.StartCheckoutActivity($"nop.checkout.{stage}", checkoutMode, stage);
-            NopTelemetry.SetCheckoutResult(stageActivity, NopTelemetry.CheckoutResultSuccess);
+            using var stageActivity = CheckoutTelemetry.StartActivity($"nop.checkout.{stage}", checkoutMode, stage);
+            CheckoutTelemetry.SetResult(stageActivity, CheckoutTelemetry.ResultSuccess);
 
             if (!string.IsNullOrWhiteSpace(paymentMethodSystemName))
                 stageActivity?.SetTag("payment.method.system", paymentMethodSystemName);
@@ -1643,14 +1643,14 @@ public partial class OrderProcessingService : IOrderProcessingService
             try
             {
                 await action();
-                NopTelemetry.RecordCheckoutStageDuration(stopwatch.Elapsed.TotalMilliseconds, checkoutMode, stage,
-                    NopTelemetry.CheckoutResultSuccess, paymentMethodSystemName);
+                CheckoutTelemetry.RecordStageDuration(stopwatch.Elapsed.TotalMilliseconds, checkoutMode, stage,
+                    CheckoutTelemetry.ResultSuccess, paymentMethodSystemName);
             }
             catch (Exception exception)
             {
                 MarkCheckoutFailure(stageActivity, stage, GetFailureReasonCode(stage, exception));
-                NopTelemetry.RecordCheckoutStageDuration(stopwatch.Elapsed.TotalMilliseconds, checkoutMode, stage,
-                    NopTelemetry.CheckoutResultFailure, paymentMethodSystemName);
+                CheckoutTelemetry.RecordStageDuration(stopwatch.Elapsed.TotalMilliseconds, checkoutMode, stage,
+                    CheckoutTelemetry.ResultFailure, paymentMethodSystemName);
                 throw;
             }
         }
@@ -1668,9 +1668,9 @@ public partial class OrderProcessingService : IOrderProcessingService
             try
             {
                 ProcessPaymentResult processPaymentResult;
-                using (var paymentActivity = NopTelemetry.StartCheckoutActivity("nop.checkout.payment", checkoutMode, "payment"))
+                using (var paymentActivity = CheckoutTelemetry.StartActivity("nop.checkout.payment", checkoutMode, "payment"))
                 {
-                    NopTelemetry.SetCheckoutResult(paymentActivity, NopTelemetry.CheckoutResultSuccess);
+                    CheckoutTelemetry.SetResult(paymentActivity, CheckoutTelemetry.ResultSuccess);
                     if (!string.IsNullOrWhiteSpace(processPaymentRequest.PaymentMethodSystemName))
                         paymentActivity?.SetTag("payment.method.system", processPaymentRequest.PaymentMethodSystemName);
 
@@ -1688,20 +1688,20 @@ public partial class OrderProcessingService : IOrderProcessingService
                         if (!processPaymentResult.Success)
                         {
                             MarkCheckoutFailure(paymentActivity, "payment", "payment_declined");
-                            NopTelemetry.RecordCheckoutStageDuration(paymentStopwatch.Elapsed.TotalMilliseconds, checkoutMode, "payment",
-                                NopTelemetry.CheckoutResultFailure, processPaymentRequest.PaymentMethodSystemName);
+                            CheckoutTelemetry.RecordStageDuration(paymentStopwatch.Elapsed.TotalMilliseconds, checkoutMode, "payment",
+                                CheckoutTelemetry.ResultFailure, processPaymentRequest.PaymentMethodSystemName);
                         }
                         else
                         {
-                            NopTelemetry.RecordCheckoutStageDuration(paymentStopwatch.Elapsed.TotalMilliseconds, checkoutMode, "payment",
-                                NopTelemetry.CheckoutResultSuccess, processPaymentRequest.PaymentMethodSystemName);
+                            CheckoutTelemetry.RecordStageDuration(paymentStopwatch.Elapsed.TotalMilliseconds, checkoutMode, "payment",
+                                CheckoutTelemetry.ResultSuccess, processPaymentRequest.PaymentMethodSystemName);
                         }
                     }
                     catch (Exception exception)
                     {
                         MarkCheckoutFailure(paymentActivity, "payment", GetFailureReasonCode("payment", exception));
-                        NopTelemetry.RecordCheckoutStageDuration(paymentStopwatch.Elapsed.TotalMilliseconds, checkoutMode, "payment",
-                            NopTelemetry.CheckoutResultFailure, processPaymentRequest.PaymentMethodSystemName);
+                        CheckoutTelemetry.RecordStageDuration(paymentStopwatch.Elapsed.TotalMilliseconds, checkoutMode, "payment",
+                            CheckoutTelemetry.ResultFailure, processPaymentRequest.PaymentMethodSystemName);
                         throw;
                     }
                 }
@@ -1760,7 +1760,7 @@ public partial class OrderProcessingService : IOrderProcessingService
             }
             catch (Exception exc)
             {
-                NopTelemetry.SetCheckoutResult(checkoutActivity, NopTelemetry.CheckoutResultFailure);
+                CheckoutTelemetry.SetResult(checkoutActivity, CheckoutTelemetry.ResultFailure);
                 await _logger.ErrorAsync(exc.Message, exc);
                 result.AddError(exc.Message);
             }
@@ -1818,7 +1818,7 @@ public partial class OrderProcessingService : IOrderProcessingService
         }
 
         if (result.Success)
-            NopTelemetry.SetCheckoutResult(checkoutActivity, NopTelemetry.CheckoutResultSuccess);
+            CheckoutTelemetry.SetResult(checkoutActivity, CheckoutTelemetry.ResultSuccess);
 
         return result;
     }
