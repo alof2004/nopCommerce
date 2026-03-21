@@ -24,6 +24,7 @@ public class ObservedOrderProcessingService : IOrderProcessingService
     {
         var checkoutMode = CheckoutTelemetry.GetMode();
 
+        using var inflightCheckout = CheckoutTelemetry.TrackInflightRequest(checkoutMode);
         using var checkoutActivity = CheckoutTelemetry.StartActivity("nop.checkout.place_order", checkoutMode, "place_order");
         CheckoutTelemetry.SetResult(checkoutActivity, CheckoutTelemetry.ResultSuccess);
 

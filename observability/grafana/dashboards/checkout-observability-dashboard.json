@@ -167,6 +167,78 @@
     },
     {
       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Shows the number of backend checkout requests currently active. This is an early saturation signal that becomes more meaningful when read together with stage latency.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 10,
+        "y": 0
+      },
+      "id": 9,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(nop_checkout_inflight_requests)",
+          "legendFormat": "inflight checkouts",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Active Checkout Requests",
+      "type": "stat"
+    },
+    {
+      "datasource": {
         "type": "tempo",
         "uid": "tempo"
       },
@@ -195,8 +267,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 14,
-        "x": 10,
+        "w": 10,
+        "x": 14,
         "y": 0
       },
       "id": 3,
@@ -635,6 +707,6 @@
   "timezone": "browser",
   "title": "Checkout Observability",
   "uid": "checkout-observability",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

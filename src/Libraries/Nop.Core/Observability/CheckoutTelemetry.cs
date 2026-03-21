@@ -24,6 +24,9 @@ public static class CheckoutTelemetry
     private static readonly Histogram<double> StageDurationHistogram =
         NopTelemetry.Meter.CreateHistogram<double>("nop.checkout.stage_duration_ms", "ms");
 
+    private static readonly UpDownCounter<long> InflightRequestsCounter =
+        NopTelemetry.Meter.CreateUpDownCounter<long>("nop.checkout.inflight_requests");
+
     public static string GetMode()
     {
         return Activity.Current?.GetBaggageItem(ModeTag) ?? ModeStandard;
@@ -92,8 +95,41 @@ public static class CheckoutTelemetry
         StageDurationHistogram.Record(durationMs, tags);
     }
 
+    public static IDisposable TrackInflightRequest(string checkoutMode)
+    {
+        var normalizedMode = NormalizeMode(checkoutMode);
+        TagList tags = new()
+        {
+            { "checkout_mode", normalizedMode }
+        };
+
+        InflightRequestsCounter.Add(1, tags);
+
+        return new InflightRequestScope(tags);
+    }
+
     private static string NormalizeMode(string checkoutMode)
     {
         return string.IsNullOrWhiteSpace(checkoutMode) ? ModeStandard : checkoutMode;
+    }
+
+    private sealed class InflightRequestScope : IDisposable
+    {
+        private readonly TagList _tags;
+        private bool _disposed;
+
+        public InflightRequestScope(TagList tags)
+        {
+            _tags = tags;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+
+            InflightRequestsCounter.Add(-1, _tags);
+            _disposed = true;
+        }
     }
 }
