@@ -1591,8 +1591,23 @@ public partial class OrderProcessingService : IOrderProcessingService
             };
         }
 
-        void MarkCheckoutFailure(Activity failedActivity, string stage, string reasonCode, bool recordMetric = true)
+        static string GetFailureSubsystem(string stage, Exception exception)
         {
+            return stage switch
+            {
+                "prepare" => CheckoutTelemetry.SubsystemBasket,
+                "payment" => CheckoutTelemetry.SubsystemPaymentProvider,
+                "persist_order" => CheckoutTelemetry.SubsystemOrderProcessing,
+                "move_items" => CheckoutTelemetry.SubsystemInventory,
+                "finalize" => CheckoutTelemetry.SubsystemOrderProcessing,
+                _ => CheckoutTelemetry.SubsystemGeneral
+            };
+        }
+
+        void MarkCheckoutFailure(Activity failedActivity, string stage, string reasonCode, bool recordMetric = true, string subsystem = null)
+        {
+            var requestActivity = checkoutActivity?.Parent;
+
             CheckoutTelemetry.SetFailure(failedActivity, stage, reasonCode);
             failedActivity?.SetStatus(ActivityStatusCode.Error);
             failedActivity?.AddEvent(new ActivityEvent("exception"));
@@ -1600,12 +1615,18 @@ public partial class OrderProcessingService : IOrderProcessingService
             CheckoutTelemetry.SetFailure(checkoutActivity, stage, reasonCode);
             checkoutActivity?.SetStatus(ActivityStatusCode.Error);
 
+            CheckoutTelemetry.SetFailure(requestActivity, stage, reasonCode);
+            requestActivity?.SetStatus(ActivityStatusCode.Error);
+
             if (recordMetric)
-                CheckoutTelemetry.RecordFailure(checkoutMode, stage, reasonCode);
+                CheckoutTelemetry.RecordStageCompletion(stage, CheckoutTelemetry.ResultFailure, reasonCode, subsystem);
         }
 
         async Task<T> RunCheckoutStageAsync<T>(string stage, Func<Task<T>> action, string paymentMethodSystemName = null)
         {
+            // Record attempt for funnel tracking
+            CheckoutTelemetry.RecordStageAttempt(stage);
+
             using var stageActivity = CheckoutTelemetry.StartActivity($"nop.checkout.{stage}", checkoutMode, stage);
             CheckoutTelemetry.SetResult(stageActivity, CheckoutTelemetry.ResultSuccess);
 
@@ -1623,7 +1644,7 @@ public partial class OrderProcessingService : IOrderProcessingService
             }
             catch (Exception exception)
             {
-                MarkCheckoutFailure(stageActivity, stage, GetFailureReasonCode(stage, exception));
+                MarkCheckoutFailure(stageActivity, stage, GetFailureReasonCode(stage, exception), subsystem: GetFailureSubsystem(stage, exception));
                 CheckoutTelemetry.RecordStageDuration(stopwatch.Elapsed.TotalMilliseconds, checkoutMode, stage,
                     CheckoutTelemetry.ResultFailure, paymentMethodSystemName);
                 throw;
@@ -1632,6 +1653,9 @@ public partial class OrderProcessingService : IOrderProcessingService
 
         async Task RunCheckoutStageBlockAsync(string stage, Func<Task> action, string paymentMethodSystemName = null)
         {
+            // Record attempt for funnel tracking
+            CheckoutTelemetry.RecordStageAttempt(stage);
+
             using var stageActivity = CheckoutTelemetry.StartActivity($"nop.checkout.{stage}", checkoutMode, stage);
             CheckoutTelemetry.SetResult(stageActivity, CheckoutTelemetry.ResultSuccess);
 
@@ -1648,7 +1672,7 @@ public partial class OrderProcessingService : IOrderProcessingService
             }
             catch (Exception exception)
             {
-                MarkCheckoutFailure(stageActivity, stage, GetFailureReasonCode(stage, exception));
+                MarkCheckoutFailure(stageActivity, stage, GetFailureReasonCode(stage, exception), subsystem: GetFailureSubsystem(stage, exception));
                 CheckoutTelemetry.RecordStageDuration(stopwatch.Elapsed.TotalMilliseconds, checkoutMode, stage,
                     CheckoutTelemetry.ResultFailure, paymentMethodSystemName);
                 throw;
@@ -1668,6 +1692,10 @@ public partial class OrderProcessingService : IOrderProcessingService
             try
             {
                 ProcessPaymentResult processPaymentResult;
+
+                // Record payment stage attempt for funnel tracking
+                CheckoutTelemetry.RecordStageAttempt("payment");
+
                 using (var paymentActivity = CheckoutTelemetry.StartActivity("nop.checkout.payment", checkoutMode, "payment"))
                 {
                     CheckoutTelemetry.SetResult(paymentActivity, CheckoutTelemetry.ResultSuccess);
@@ -1687,7 +1715,7 @@ public partial class OrderProcessingService : IOrderProcessingService
 
                         if (!processPaymentResult.Success)
                         {
-                            MarkCheckoutFailure(paymentActivity, "payment", "payment_declined");
+                            MarkCheckoutFailure(paymentActivity, "payment", "payment_declined", subsystem: CheckoutTelemetry.SubsystemPaymentProvider);
                             CheckoutTelemetry.RecordStageDuration(paymentStopwatch.Elapsed.TotalMilliseconds, checkoutMode, "payment",
                                 CheckoutTelemetry.ResultFailure, processPaymentRequest.PaymentMethodSystemName);
                         }
@@ -1699,7 +1727,7 @@ public partial class OrderProcessingService : IOrderProcessingService
                     }
                     catch (Exception exception)
                     {
-                        MarkCheckoutFailure(paymentActivity, "payment", GetFailureReasonCode("payment", exception));
+                        MarkCheckoutFailure(paymentActivity, "payment", GetFailureReasonCode("payment", exception), subsystem: CheckoutTelemetry.SubsystemPaymentProvider);
                         CheckoutTelemetry.RecordStageDuration(paymentStopwatch.Elapsed.TotalMilliseconds, checkoutMode, "payment",
                             CheckoutTelemetry.ResultFailure, processPaymentRequest.PaymentMethodSystemName);
                         throw;
@@ -1802,7 +1830,7 @@ public partial class OrderProcessingService : IOrderProcessingService
             {
                 result = new PlaceOrderResult();
                 result.Errors.Add(_localizationService.GetResourceAsync("Checkout.MinOrderPlacementInterval").Result);
-                MarkCheckoutFailure(checkoutActivity, "prepare", "minimum_interval");
+                MarkCheckoutFailure(checkoutActivity, "prepare", "minimum_interval", subsystem: CheckoutTelemetry.SubsystemOrderProcessing);
             }
             else
             {

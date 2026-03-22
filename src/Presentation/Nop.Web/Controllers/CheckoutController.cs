@@ -1532,6 +1532,9 @@ public partial class CheckoutController : BasePublicController
     {
         try
         {
+            // Record checkout attempt for funnel tracking
+            CheckoutTelemetry.RecordStageAttempt("prepare");
+
             //validation
             if (_orderSettings.CheckoutDisabled)
                 throw new Exception(await _localizationService.GetResourceAsync("Checkout.Disabled"));
@@ -2219,22 +2222,22 @@ public partial class CheckoutController : BasePublicController
         CheckoutTelemetry.SetResult(Activity.Current, CheckoutTelemetry.ResultSuccess);
     }
 
-    protected static void RecordCheckoutRequestFailure(string stage, string reasonCode, bool recordMetric = true)
+    protected static void RecordCheckoutRequestFailure(string stage, string reasonCode, bool recordMetric = true, string subsystem = null)
     {
         var activity = Activity.Current;
         CheckoutTelemetry.SetFailure(activity, stage, reasonCode);
         activity?.SetStatus(ActivityStatusCode.Error);
 
         if (recordMetric)
-            CheckoutTelemetry.RecordFailure(CheckoutTelemetry.GetMode(), stage, reasonCode);
+            CheckoutTelemetry.RecordStageCompletion(stage, CheckoutTelemetry.ResultFailure, reasonCode, subsystem);
     }
 
-    protected static void EnsureCheckoutRequestFailure(string stage, string reasonCode, bool recordMetric = true)
+    protected static void EnsureCheckoutRequestFailure(string stage, string reasonCode, bool recordMetric = true, string subsystem = null)
     {
         var currentReasonCode = Activity.Current?.GetTagItem(CheckoutTelemetry.FailureReasonTag) as string;
         if (!string.IsNullOrWhiteSpace(currentReasonCode))
             return;
 
-        RecordCheckoutRequestFailure(stage, reasonCode, recordMetric);
+        RecordCheckoutRequestFailure(stage, reasonCode, recordMetric, subsystem);
     }
 }

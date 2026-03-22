@@ -18,8 +18,18 @@ public static class CheckoutTelemetry
     public const string ResultSuccess = "success";
     public const string ResultFailure = "failure";
 
-    private static readonly Counter<long> FailuresCounter =
-        NopTelemetry.Meter.CreateCounter<long>("nop.checkout.failures_total");
+    // Subsystem identifiers for granular failure tracking
+    public const string SubsystemBasket = "basket";
+    public const string SubsystemInventory = "inventory";
+    public const string SubsystemPaymentProvider = "payment_provider";
+    public const string SubsystemOrderProcessing = "order_processing";
+    public const string SubsystemGeneral = "general";
+
+    private static readonly Counter<long> AttemptsCounter =
+        NopTelemetry.Meter.CreateCounter<long>("nop.checkout.attempts_total");
+
+    private static readonly Counter<long> StageCompletionsCounter =
+        NopTelemetry.Meter.CreateCounter<long>("nop.checkout.stage_completions_total");
 
     private static readonly Histogram<double> StageDurationHistogram =
         NopTelemetry.Meter.CreateHistogram<double>("nop.checkout.stage_duration_ms", "ms");
@@ -64,16 +74,46 @@ public static class CheckoutTelemetry
         activity?.SetTag(FailureReasonTag, reasonCode);
     }
 
-    public static void RecordFailure(string checkoutMode, string stage, string reasonCode)
+    /// <summary>
+    /// Records a checkout stage attempt (called at the start of a stage, before outcome is known).
+    /// </summary>
+    /// <param name="stage">The checkout stage (prepare, payment, persist_order, move_items, finalize)</param>
+    public static void RecordStageAttempt(string stage)
     {
         TagList tags = new()
         {
-            { "checkout_mode", NormalizeMode(checkoutMode) },
-            { "stage", stage },
-            { "reason_code", reasonCode }
+            { "stage", stage }
         };
 
-        FailuresCounter.Add(1, tags);
+        AttemptsCounter.Add(1, tags);
+    }
+
+    /// <summary>
+    /// Records the completion of a checkout stage with outcome (success or failure).
+    /// </summary>
+    /// <param name="stage">The checkout stage</param>
+    /// <param name="outcome">success or failure</param>
+    /// <param name="reasonCode">Optional failure reason code</param>
+    /// <param name="subsystem">Optional subsystem identifier (basket, inventory, payment_provider, order_processing)</param>
+    public static void RecordStageCompletion(string stage, string outcome, string reasonCode = null, string subsystem = null)
+    {
+        TagList tags = new()
+        {
+            { "stage", stage },
+            { "outcome", outcome }
+        };
+
+        if (!string.IsNullOrWhiteSpace(reasonCode))
+        {
+            tags.Add("reason_code", reasonCode);
+        }
+
+        if (!string.IsNullOrWhiteSpace(subsystem))
+        {
+            tags.Add("subsystem", subsystem);
+        }
+
+        StageCompletionsCounter.Add(1, tags);
     }
 
     public static void RecordStageDuration(double durationMs, string checkoutMode, string stage, string outcome,
@@ -93,6 +133,9 @@ public static class CheckoutTelemetry
         }
 
         StageDurationHistogram.Record(durationMs, tags);
+
+        // Also record stage completion for success rate tracking
+        RecordStageCompletion(stage, outcome);
     }
 
     public static IDisposable TrackInflightRequest(string checkoutMode)
