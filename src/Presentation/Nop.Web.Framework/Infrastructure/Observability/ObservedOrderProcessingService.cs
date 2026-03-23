@@ -25,42 +25,51 @@ public class ObservedOrderProcessingService : IOrderProcessingService
         var checkoutMode = CheckoutTelemetry.GetMode();
         var stopwatch = Stopwatch.StartNew();
 
-        using var checkoutActivity = CheckoutTelemetry.StartActivity("nop.checkout.place_order", checkoutMode, "place_order");
-        CheckoutTelemetry.SetResult(checkoutActivity, CheckoutTelemetry.ResultSuccess);
-
-        var paymentMethodSystemName = processPaymentRequest?.PaymentMethodSystemName;
-
-        if (!string.IsNullOrWhiteSpace(paymentMethodSystemName))
-            checkoutActivity?.SetTag("payment.method.system", paymentMethodSystemName);
+        CheckoutTelemetry.IncrementActiveCheckouts(checkoutMode);
 
         try
         {
-            var result = await _orderProcessingService.PlaceOrderAsync(processPaymentRequest);
-            stopwatch.Stop();
+            using var checkoutActivity = CheckoutTelemetry.StartActivity("nop.checkout.place_order", checkoutMode, "place_order");
+            CheckoutTelemetry.SetResult(checkoutActivity, CheckoutTelemetry.ResultSuccess);
 
-            if (!result.Success)
+            var paymentMethodSystemName = processPaymentRequest?.PaymentMethodSystemName;
+
+            if (!string.IsNullOrWhiteSpace(paymentMethodSystemName))
+                checkoutActivity?.SetTag("payment.method.system", paymentMethodSystemName);
+
+            try
             {
+                var result = await _orderProcessingService.PlaceOrderAsync(processPaymentRequest);
+                stopwatch.Stop();
+
+                if (!result.Success)
+                {
+                    CheckoutTelemetry.SetResult(checkoutActivity, CheckoutTelemetry.ResultFailure);
+                    checkoutActivity?.SetStatus(ActivityStatusCode.Error);
+                    CheckoutTelemetry.RecordCompletionTime(stopwatch.Elapsed.TotalMilliseconds, checkoutMode,
+                        CheckoutTelemetry.ResultFailure, paymentMethodSystemName);
+                }
+                else
+                {
+                    CheckoutTelemetry.RecordCompletionTime(stopwatch.Elapsed.TotalMilliseconds, checkoutMode,
+                        CheckoutTelemetry.ResultSuccess, paymentMethodSystemName);
+                }
+
+                return result;
+            }
+            catch
+            {
+                stopwatch.Stop();
                 CheckoutTelemetry.SetResult(checkoutActivity, CheckoutTelemetry.ResultFailure);
                 checkoutActivity?.SetStatus(ActivityStatusCode.Error);
                 CheckoutTelemetry.RecordCompletionTime(stopwatch.Elapsed.TotalMilliseconds, checkoutMode,
                     CheckoutTelemetry.ResultFailure, paymentMethodSystemName);
+                throw;
             }
-            else
-            {
-                CheckoutTelemetry.RecordCompletionTime(stopwatch.Elapsed.TotalMilliseconds, checkoutMode,
-                    CheckoutTelemetry.ResultSuccess, paymentMethodSystemName);
-            }
-
-            return result;
         }
-        catch
+        finally
         {
-            stopwatch.Stop();
-            CheckoutTelemetry.SetResult(checkoutActivity, CheckoutTelemetry.ResultFailure);
-            checkoutActivity?.SetStatus(ActivityStatusCode.Error);
-            CheckoutTelemetry.RecordCompletionTime(stopwatch.Elapsed.TotalMilliseconds, checkoutMode,
-                CheckoutTelemetry.ResultFailure, paymentMethodSystemName);
-            throw;
+            CheckoutTelemetry.DecrementActiveCheckouts(checkoutMode);
         }
     }
 

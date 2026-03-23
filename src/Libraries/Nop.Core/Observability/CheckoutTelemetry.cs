@@ -37,6 +37,14 @@ public static class CheckoutTelemetry
     private static readonly Histogram<double> CompletionTimeHistogram =
         NopTelemetry.Meter.CreateHistogram<double>("nop.checkout.completion_time_ms", "ms");
 
+    private static readonly UpDownCounter<long> ActiveCheckoutsCounter =
+        NopTelemetry.Meter.CreateUpDownCounter<long>("nop.checkout.active");
+
+    private static readonly Counter<long> RetryAttemptsCounter =
+        NopTelemetry.Meter.CreateCounter<long>("nop.checkout.retry_attempts_total");
+
+    public const string IsRetryTag = "is_retry";
+
     public static string GetMode()
     {
         return Activity.Current?.GetBaggageItem(ModeTag) ?? ModeStandard;
@@ -78,10 +86,11 @@ public static class CheckoutTelemetry
     /// Records a checkout stage attempt (called at the start of a stage, before outcome is known).
     /// </summary>
     /// <param name="stage">The checkout stage (prepare, payment, persist_order, move_items, finalize)</param>
-    public static void RecordStageAttempt(string stage)
+    public static void RecordStageAttempt(string stage, string checkoutMode)
     {
         TagList tags = new()
         {
+            { "checkout_mode", NormalizeMode(checkoutMode) },
             { "stage", stage }
         };
 
@@ -95,10 +104,11 @@ public static class CheckoutTelemetry
     /// <param name="outcome">success or failure</param>
     /// <param name="reasonCode">Optional failure reason code</param>
     /// <param name="subsystem">Optional subsystem identifier (basket, inventory, payment_provider, order_processing)</param>
-    public static void RecordStageCompletion(string stage, string outcome, string reasonCode = null, string subsystem = null)
+    public static void RecordStageCompletion(string stage, string checkoutMode, string outcome, string reasonCode = null, string subsystem = null)
     {
         TagList tags = new()
         {
+            { "checkout_mode", NormalizeMode(checkoutMode) },
             { "stage", stage },
             { "outcome", outcome }
         };
@@ -117,7 +127,7 @@ public static class CheckoutTelemetry
     }
 
     public static void RecordStageDuration(double durationMs, string checkoutMode, string stage, string outcome,
-        string paymentMethodSystemName = null)
+        string paymentMethodSystemName = null, string reasonCode = null, string subsystem = null, bool recordCompletion = true)
     {
         TagList tags = new()
         {
@@ -134,8 +144,8 @@ public static class CheckoutTelemetry
 
         StageDurationHistogram.Record(durationMs, tags);
 
-        // Also record stage completion for success rate tracking
-        RecordStageCompletion(stage, outcome);
+        if (recordCompletion)
+            RecordStageCompletion(stage, checkoutMode, outcome, reasonCode, subsystem);
     }
 
     public static void RecordCompletionTime(double durationMs, string checkoutMode, string outcome,
@@ -152,7 +162,69 @@ public static class CheckoutTelemetry
             tags.Add("payment.method.system", paymentMethodSystemName);
         }
 
+        if (IsRetry())
+        {
+            tags.Add("is_retry", "true");
+        }
+
         CompletionTimeHistogram.Record(durationMs, tags);
+    }
+
+    public static void IncrementActiveCheckouts(string checkoutMode)
+    {
+        TagList tags = new()
+        {
+            { "checkout_mode", NormalizeMode(checkoutMode) }
+        };
+
+        ActiveCheckoutsCounter.Add(1, tags);
+    }
+
+    public static void DecrementActiveCheckouts(string checkoutMode)
+    {
+        TagList tags = new()
+        {
+            { "checkout_mode", NormalizeMode(checkoutMode) }
+        };
+
+        ActiveCheckoutsCounter.Add(-1, tags);
+    }
+
+    /// <summary>
+    /// Marks the current checkout attempt as a retry in the activity baggage.
+    /// Call this at the start of checkout if retry is detected (e.g., recent failed attempt for same cart).
+    /// </summary>
+    public static void MarkAsRetry()
+    {
+        Activity.Current?.SetBaggage(IsRetryTag, "true");
+    }
+
+    /// <summary>
+    /// Returns true if the current checkout is marked as a retry.
+    /// </summary>
+    public static bool IsRetry()
+    {
+        return Activity.Current?.GetBaggageItem(IsRetryTag) == "true";
+    }
+
+    /// <summary>
+    /// Records a retry attempt metric.
+    /// </summary>
+    /// <param name="checkoutMode">The checkout mode</param>
+    /// <param name="reason">Optional reason for retry (e.g., payment_failed, validation_error)</param>
+    public static void RecordRetryAttempt(string checkoutMode, string reason = null)
+    {
+        TagList tags = new()
+        {
+            { "checkout_mode", NormalizeMode(checkoutMode) }
+        };
+
+        if (!string.IsNullOrWhiteSpace(reason))
+        {
+            tags.Add("retry_reason", reason);
+        }
+
+        RetryAttemptsCounter.Add(1, tags);
     }
 
     private static string NormalizeMode(string checkoutMode)

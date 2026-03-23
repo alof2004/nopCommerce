@@ -286,11 +286,17 @@ public partial class OrderProcessingService : IOrderProcessingService
         var details = new PlaceOrderContainer();
 
         var currentCurrency = await _workContext.GetWorkingCurrencyAsync();
+        Activity.Current?.AddEvent(new ActivityEvent("validation.customer.started"));
         await PrepareAndValidateCustomerAsync(details, processPaymentRequest, currentCurrency);
+        Activity.Current?.AddEvent(new ActivityEvent("validation.cart.started"));
         await PrepareAndValidateShoppingCartAndCheckoutAttributesAsync(details, processPaymentRequest, currentCurrency);
+        Activity.Current?.AddEvent(new ActivityEvent("validation.billing_address.started"));
         await PrepareAndValidateBillingAddressAsync(details);
+        Activity.Current?.AddEvent(new ActivityEvent("validation.shipping.started"));
         await PrepareAndValidateShippingInfoAsync(details, processPaymentRequest);
+        Activity.Current?.AddEvent(new ActivityEvent("validation.totals.started"));
         await PrepareAndValidateTotalsAsync(details, processPaymentRequest);
+        Activity.Current?.AddEvent(new ActivityEvent("validation.completed"));
 
         //affiliate
         var affiliate = await _affiliateService.GetAffiliateByIdAsync(details.Customer.AffiliateId);
@@ -1332,8 +1338,14 @@ public partial class OrderProcessingService : IOrderProcessingService
             await AddGiftCardsAsync(product, sc.AttributesXml, sc.Quantity, orderItem, scUnitPriceExclTax.price);
 
             //inventory
+            Activity.Current?.AddEvent(new ActivityEvent("inventory.adjustment.started", tags: new ActivityTagsCollection
+            {
+                { "product.id", product.Id },
+                { "quantity", sc.Quantity }
+            }));
             await _productService.AdjustInventoryAsync(product, -sc.Quantity, sc.AttributesXml,
                 string.Format(await _localizationService.GetResourceAsync("Admin.StockQuantityHistory.Messages.PlaceOrder"), order.Id));
+            Activity.Current?.AddEvent(new ActivityEvent("inventory.adjustment.completed"));
 
             await _eventPublisher.PublishAsync(new ShoppingCartItemMovedToOrderItemEvent(sc, orderItem));
         }
@@ -1619,13 +1631,13 @@ public partial class OrderProcessingService : IOrderProcessingService
             requestActivity?.SetStatus(ActivityStatusCode.Error);
 
             if (recordMetric)
-                CheckoutTelemetry.RecordStageCompletion(stage, CheckoutTelemetry.ResultFailure, reasonCode, subsystem);
+                CheckoutTelemetry.RecordStageCompletion(stage, checkoutMode, CheckoutTelemetry.ResultFailure, reasonCode, subsystem);
         }
 
         async Task<T> RunCheckoutStageAsync<T>(string stage, Func<Task<T>> action, string paymentMethodSystemName = null)
         {
             // Record attempt for funnel tracking
-            CheckoutTelemetry.RecordStageAttempt(stage);
+            CheckoutTelemetry.RecordStageAttempt(stage, checkoutMode);
 
             using var stageActivity = CheckoutTelemetry.StartActivity($"nop.checkout.{stage}", checkoutMode, stage);
             CheckoutTelemetry.SetResult(stageActivity, CheckoutTelemetry.ResultSuccess);
@@ -1644,9 +1656,12 @@ public partial class OrderProcessingService : IOrderProcessingService
             }
             catch (Exception exception)
             {
-                MarkCheckoutFailure(stageActivity, stage, GetFailureReasonCode(stage, exception), subsystem: GetFailureSubsystem(stage, exception));
+                var reasonCode = GetFailureReasonCode(stage, exception);
+                var subsystem = GetFailureSubsystem(stage, exception);
+
+                MarkCheckoutFailure(stageActivity, stage, reasonCode, recordMetric: false, subsystem: subsystem);
                 CheckoutTelemetry.RecordStageDuration(stopwatch.Elapsed.TotalMilliseconds, checkoutMode, stage,
-                    CheckoutTelemetry.ResultFailure, paymentMethodSystemName);
+                    CheckoutTelemetry.ResultFailure, paymentMethodSystemName, reasonCode, subsystem);
                 throw;
             }
         }
@@ -1654,7 +1669,7 @@ public partial class OrderProcessingService : IOrderProcessingService
         async Task RunCheckoutStageBlockAsync(string stage, Func<Task> action, string paymentMethodSystemName = null)
         {
             // Record attempt for funnel tracking
-            CheckoutTelemetry.RecordStageAttempt(stage);
+            CheckoutTelemetry.RecordStageAttempt(stage, checkoutMode);
 
             using var stageActivity = CheckoutTelemetry.StartActivity($"nop.checkout.{stage}", checkoutMode, stage);
             CheckoutTelemetry.SetResult(stageActivity, CheckoutTelemetry.ResultSuccess);
@@ -1672,9 +1687,12 @@ public partial class OrderProcessingService : IOrderProcessingService
             }
             catch (Exception exception)
             {
-                MarkCheckoutFailure(stageActivity, stage, GetFailureReasonCode(stage, exception), subsystem: GetFailureSubsystem(stage, exception));
+                var reasonCode = GetFailureReasonCode(stage, exception);
+                var subsystem = GetFailureSubsystem(stage, exception);
+
+                MarkCheckoutFailure(stageActivity, stage, reasonCode, recordMetric: false, subsystem: subsystem);
                 CheckoutTelemetry.RecordStageDuration(stopwatch.Elapsed.TotalMilliseconds, checkoutMode, stage,
-                    CheckoutTelemetry.ResultFailure, paymentMethodSystemName);
+                    CheckoutTelemetry.ResultFailure, paymentMethodSystemName, reasonCode, subsystem);
                 throw;
             }
         }
@@ -1694,7 +1712,7 @@ public partial class OrderProcessingService : IOrderProcessingService
                 ProcessPaymentResult processPaymentResult;
 
                 // Record payment stage attempt for funnel tracking
-                CheckoutTelemetry.RecordStageAttempt("payment");
+                CheckoutTelemetry.RecordStageAttempt("payment", checkoutMode);
 
                 using (var paymentActivity = CheckoutTelemetry.StartActivity("nop.checkout.payment", checkoutMode, "payment"))
                 {
@@ -1710,14 +1728,18 @@ public partial class OrderProcessingService : IOrderProcessingService
                         paymentActivity?.SetTag("payment.workflow.required", paymentWorkflowRequired);
                         checkoutActivity?.SetTag("payment.workflow.required", paymentWorkflowRequired);
 
+                        paymentActivity?.AddEvent(new ActivityEvent("payment.request.started"));
                         processPaymentResult = await GetProcessPaymentResultAsync(processPaymentRequest, placeOrderContainer)
                             ?? throw new NopException("processPaymentResult is not available");
+                        paymentActivity?.AddEvent(new ActivityEvent("payment.response.received"));
 
                         if (!processPaymentResult.Success)
                         {
-                            MarkCheckoutFailure(paymentActivity, "payment", "payment_declined", subsystem: CheckoutTelemetry.SubsystemPaymentProvider);
+                            MarkCheckoutFailure(paymentActivity, "payment", "payment_declined", recordMetric: false,
+                                subsystem: CheckoutTelemetry.SubsystemPaymentProvider);
                             CheckoutTelemetry.RecordStageDuration(paymentStopwatch.Elapsed.TotalMilliseconds, checkoutMode, "payment",
-                                CheckoutTelemetry.ResultFailure, processPaymentRequest.PaymentMethodSystemName);
+                                CheckoutTelemetry.ResultFailure, processPaymentRequest.PaymentMethodSystemName, "payment_declined",
+                                CheckoutTelemetry.SubsystemPaymentProvider);
                         }
                         else
                         {
@@ -1727,17 +1749,26 @@ public partial class OrderProcessingService : IOrderProcessingService
                     }
                     catch (Exception exception)
                     {
-                        MarkCheckoutFailure(paymentActivity, "payment", GetFailureReasonCode("payment", exception), subsystem: CheckoutTelemetry.SubsystemPaymentProvider);
+                        var reasonCode = GetFailureReasonCode("payment", exception);
+
+                        MarkCheckoutFailure(paymentActivity, "payment", reasonCode, recordMetric: false,
+                            subsystem: CheckoutTelemetry.SubsystemPaymentProvider);
                         CheckoutTelemetry.RecordStageDuration(paymentStopwatch.Elapsed.TotalMilliseconds, checkoutMode, "payment",
-                            CheckoutTelemetry.ResultFailure, processPaymentRequest.PaymentMethodSystemName);
+                            CheckoutTelemetry.ResultFailure, processPaymentRequest.PaymentMethodSystemName, reasonCode,
+                            CheckoutTelemetry.SubsystemPaymentProvider);
                         throw;
                     }
                 }
 
                 if (processPaymentResult.Success)
                 {
-                    var order = await RunCheckoutStageAsync("persist_order", () =>
-                        SaveOrderDetailsAsync(processPaymentRequest, processPaymentResult, placeOrderContainer));
+                    var order = await RunCheckoutStageAsync("persist_order", async () =>
+                    {
+                        Activity.Current?.AddEvent(new ActivityEvent("order.saving.started"));
+                        var savedOrder = await SaveOrderDetailsAsync(processPaymentRequest, processPaymentResult, placeOrderContainer);
+                        Activity.Current?.AddEvent(new ActivityEvent("order.saved"));
+                        return savedOrder;
+                    });
                     checkoutActivity?.SetTag("order.initial_payment_status", order.PaymentStatus.ToString());
                     result.PlacedOrder = order;
 
@@ -1758,7 +1789,9 @@ public partial class OrderProcessingService : IOrderProcessingService
                             await CreateFirstRecurringPaymentAsync(processPaymentRequest, order);
 
                         //notifications
+                        Activity.Current?.AddEvent(new ActivityEvent("notifications.sending.started"));
                         await SendNotificationsAndSaveNotesAsync(order);
+                        Activity.Current?.AddEvent(new ActivityEvent("notifications.sent"));
 
                         //reset checkout data
                         await _customerService.ResetCheckoutDataAsync(placeOrderContainer.Customer,
@@ -1768,7 +1801,9 @@ public partial class OrderProcessingService : IOrderProcessingService
                                 order.Id), order);
 
                         //raise event
+                        Activity.Current?.AddEvent(new ActivityEvent("order_placed_event.publishing"));
                         await _eventPublisher.PublishAsync(new OrderPlacedEvent(order));
+                        Activity.Current?.AddEvent(new ActivityEvent("order_placed_event.published"));
 
                         //check order status
                         await CheckOrderStatusAsync(order);

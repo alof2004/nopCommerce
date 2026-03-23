@@ -1533,7 +1533,7 @@ public partial class CheckoutController : BasePublicController
         try
         {
             // Record checkout attempt for funnel tracking
-            CheckoutTelemetry.RecordStageAttempt("prepare");
+            CheckoutTelemetry.RecordStageAttempt("prepare", CheckoutTelemetry.ModeOpc);
 
             //validation
             if (_orderSettings.CheckoutDisabled)
@@ -2229,7 +2229,7 @@ public partial class CheckoutController : BasePublicController
         activity?.SetStatus(ActivityStatusCode.Error);
 
         if (recordMetric)
-            CheckoutTelemetry.RecordStageCompletion(stage, CheckoutTelemetry.ResultFailure, reasonCode, subsystem);
+            CheckoutTelemetry.RecordStageCompletion(stage, CheckoutTelemetry.GetMode(), CheckoutTelemetry.ResultFailure, reasonCode, subsystem);
     }
 
     protected static void EnsureCheckoutRequestFailure(string stage, string reasonCode, bool recordMetric = true, string subsystem = null)

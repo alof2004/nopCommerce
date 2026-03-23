@@ -110,7 +110,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(100 * sum(rate(nop_checkout_stage_completions_total{outcome=\"failure\"}[$interval])) / clamp_min(sum(rate(nop_checkout_stage_completions_total[$interval])), 0.000001)) or on() vector(0)",
+          "expr": "(100 * sum(rate(nop_checkout_completion_time_ms_milliseconds_count{outcome=\"failure\"}[$interval])) / clamp_min(sum(rate(nop_checkout_completion_time_ms_milliseconds_count[$interval])), 0.000001)) or on() vector(0)",
           "legendFormat": "error rate",
           "range": true,
           "refId": "A"
@@ -124,13 +124,13 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Shows the rate of successful checkout completions per second. This is the main throughput indicator. Higher values indicate more checkout capacity.",
+      "description": "Number of checkout operations currently in progress. Shows real-time concurrency. High values indicate load spikes or stuck checkouts. A rising count with flat completion rate suggests blocked checkouts (deadlocks, timeouts).",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 2,
+          "decimals": 0,
           "mappings": [],
           "noValue": "0",
           "thresholds": {
@@ -139,10 +139,22 @@
               {
                 "color": "blue",
                 "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10
+              },
+              {
+                "color": "orange",
+                "value": 25
+              },
+              {
+                "color": "red",
+                "value": 50
               }
             ]
           },
-          "unit": "ops"
+          "unit": "none"
         },
         "overrides": []
       },
@@ -154,7 +166,7 @@
       },
       "id": 2,
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
@@ -174,13 +186,13 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(rate(nop_checkout_stage_completions_total{stage=\"finalize\",outcome=\"success\"}[$interval])) or on() vector(0)",
-          "legendFormat": "successful checkouts/sec",
-          "range": true,
+          "expr": "sum(nop_checkout_active) or on() vector(0)",
+          "legendFormat": "active checkouts",
+          "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Successful Checkouts per Second",
+      "title": "Active Checkouts",
       "type": "stat"
     },
     {
@@ -345,7 +357,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Main view of the custom latency metric. p95 is used because it is more sensitive to real degradation than an average.",
+      "description": "Stage-level latency at p95 and p99. p95 shows typical high-percentile performance, p99 reveals tail latency and worst-case user experience. More sensitive to degradation than averages.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -417,12 +429,23 @@
           },
           "editorMode": "code",
           "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(nop_checkout_stage_duration_ms_milliseconds_bucket{stage=~\"$stage\"}[$interval])))",
-          "legendFormat": "{{stage}}",
+          "legendFormat": "{{stage}} p95",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum by (le, stage) (rate(nop_checkout_stage_duration_ms_milliseconds_bucket{stage=~\"$stage\"}[$interval])))",
+          "legendFormat": "{{stage}} p99",
+          "range": true,
+          "refId": "B"
         }
       ],
-      "title": "Checkout Stage Latency p95",
+      "title": "Checkout Stage Latency (p95 / p99)",
       "type": "timeseries"
     },
     {
@@ -617,7 +640,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(100 * sum(rate(nop_checkout_stage_completions_total{outcome=\"failure\"}[$interval])) / clamp_min(sum(rate(nop_checkout_stage_completions_total[$interval])), 0.000001)) or on() vector(0)",
+          "expr": "(100 * sum(rate(nop_checkout_completion_time_ms_milliseconds_count{outcome=\"failure\"}[$interval])) / clamp_min(sum(rate(nop_checkout_completion_time_ms_milliseconds_count[$interval])), 0.000001)) or on() vector(0)",
           "legendFormat": "error rate",
           "range": true,
           "refId": "A"

@@ -1,6 +1,6 @@
 import checkoutFlow from './checkout-observability.js';
 
-const FIXED_VUS = Number(__ENV.K6_FIXED_VUS || '2');
+const FIXED_VUS = Number(__ENV.K6_FIXED_VUS || '1');
 const FIXED_DURATION = __ENV.K6_FIXED_DURATION || '3m';
 
 export const options = {

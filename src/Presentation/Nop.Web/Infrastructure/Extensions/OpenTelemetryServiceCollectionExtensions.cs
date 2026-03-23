@@ -43,10 +43,10 @@ public static class OpenTelemetryServiceCollectionExtensions
                     .AddSource(NopTelemetry.ActivitySourceName)
                     .AddAspNetCoreInstrumentation(options =>
                     {
-                        options.RecordException = false;
+                        options.RecordException = true;
                         options.Filter = context => !IsStaticAssetRequest(context.Request.Path);
                     })
-                    .AddHttpClientInstrumentation(options => options.RecordException = false);
+                    .AddHttpClientInstrumentation(options => options.RecordException = true);
 
                 if (!string.IsNullOrWhiteSpace(otlpEndpoint))
                     tracing.AddOtlpExporter();
