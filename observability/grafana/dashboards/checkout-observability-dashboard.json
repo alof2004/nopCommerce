@@ -30,6 +30,22 @@
   "liveNow": false,
   "panels": [
     {
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 15,
+      "options": {
+        "content": "## Checkout Overview\nThis dashboard tracks the backend **order-placement flow** for nopCommerce. Start with the summary cards to assess current health, then use the stage panels to isolate degradation, and finally inspect traces for request-level evidence.\n\n**How to read it:** Error rate shows classified checkout failures, successful checkouts shows throughput, median checkout time shows typical user experience, and the lower panels explain where latency, dropoff, or subsystem-specific issues are appearing.",
+        "mode": "markdown"
+      },
+      "title": "Dashboard Overview",
+      "transparent": true,
+      "type": "text"
+    },
+    {
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -70,7 +86,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 0
+        "y": 4
       },
       "id": 1,
       "options": {
@@ -94,7 +110,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(100 * sum(increase(nop_checkout_failures_total[$interval])) / clamp_min((sum(increase(nop_checkout_failures_total[$interval])) + sum(increase(nop_checkout_stage_duration_ms_milliseconds_count{stage=\"finalize\",outcome=\"success\"}[$interval]))), 0.000001)) or on() vector(0)",
+          "expr": "(100 * sum(rate(nop_checkout_stage_completions_total{outcome=\"failure\"}[$interval])) / clamp_min(sum(rate(nop_checkout_stage_completions_total[$interval])), 0.000001)) or on() vector(0)",
           "legendFormat": "error rate",
           "range": true,
           "refId": "A"
@@ -108,7 +124,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Shows how many checkout requests are completing successfully each second. This is the main throughput indicator for the flow.",
+      "description": "Shows the rate of successful checkout completions per second. This is the main throughput indicator. Higher values indicate more checkout capacity.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -134,7 +150,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 0
+        "y": 4
       },
       "id": 2,
       "options": {
@@ -158,8 +174,8 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(rate(nop_checkout_stage_duration_ms_milliseconds_count{stage=\"finalize\",outcome=\"success\"}[$interval])) or on() vector(0)",
-          "legendFormat": "successful checkouts",
+          "expr": "sum(rate(nop_checkout_stage_completions_total{stage=\"finalize\",outcome=\"success\"}[$interval])) or on() vector(0)",
+          "legendFormat": "successful checkouts/sec",
           "range": true,
           "refId": "A"
         }
@@ -172,7 +188,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Median (p50) checkout completion time. Shows typical user experience. If this rises above 2-3 seconds, users will notice slowness even if the system isn't failing.",
+      "description": "Median (p50) end-to-end checkout completion time from the order-processing boundary. This is a direct user-experience metric for the full backend checkout operation, not just the final stage.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -206,7 +222,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 0
+        "y": 4
       },
       "id": 9,
       "options": {
@@ -230,7 +246,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.50, sum(rate(nop_checkout_stage_duration_ms_milliseconds_bucket{stage=\"finalize\",outcome=\"success\"}[$interval])) by (le)) or on() vector(0)",
+          "expr": "histogram_quantile(0.50, sum(rate(nop_checkout_completion_time_ms_milliseconds_bucket{outcome=\"success\"}[$interval])) by (le)) or on() vector(0)",
           "legendFormat": "median completion time",
           "range": true,
           "refId": "A"
@@ -293,7 +309,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 17
+        "y": 21
       },
       "id": 5,
       "options": {
@@ -315,7 +331,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (stage, reason_code) (increase(nop_checkout_failures_total{stage=~\"$stage\"}[$interval]))",
+          "expr": "sum by (stage, reason_code) (rate(nop_checkout_stage_completions_total{outcome=\"failure\",stage=~\"$stage\"}[$interval]))",
           "legendFormat": "{{stage}} / {{reason_code}}",
           "range": true,
           "refId": "A"
@@ -378,7 +394,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 8
+        "y": 12
       },
       "id": 6,
       "options": {
@@ -407,6 +423,104 @@
         }
       ],
       "title": "Checkout Stage Latency p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Shows the success rate for each checkout stage. Healthy stages maintain 99-100% success. If a stage drops below 98%, investigate failures by reason. Early warning indicator - success rate degrades before error rate becomes critical.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "success rate %",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 95
+              },
+              {
+                "color": "green",
+                "value": 99
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "calcs": [
+            "last",
+            "min"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "100 * (sum by (stage) (rate(nop_checkout_stage_completions_total{outcome=\"success\",stage=~\"$stage\"}[$interval])) / sum by (stage) (rate(nop_checkout_stage_completions_total{stage=~\"$stage\"}[$interval])))",
+          "legendFormat": "{{stage}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Stage Success Rate",
       "type": "timeseries"
     },
     {
@@ -477,12 +591,16 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 17
+        "y": 21
       },
       "id": 10,
       "options": {
         "legend": {
-          "calcs": ["last", "mean", "max"],
+          "calcs": [
+            "last",
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -499,181 +617,13 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(100 * sum(rate(nop_checkout_failures_total[$interval])) / clamp_min((sum(rate(nop_checkout_failures_total[$interval])) + sum(rate(nop_checkout_stage_duration_ms_milliseconds_count{stage=\"finalize\",outcome=\"success\"}[$interval]))), 0.000001)) or on() vector(0)",
+          "expr": "(100 * sum(rate(nop_checkout_stage_completions_total{outcome=\"failure\"}[$interval])) / clamp_min(sum(rate(nop_checkout_stage_completions_total[$interval])), 0.000001)) or on() vector(0)",
           "legendFormat": "error rate",
           "range": true,
           "refId": "A"
         }
       ],
       "title": "Checkout Error Rate Over Time",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "Shows the distribution of end-to-end checkout completion times across percentiles. Wide gaps between p50 and p99 indicate inconsistent performance or outliers. If p99 is much higher than p95, investigate slow traces for bottlenecks.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "ms",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "pointSize": 4,
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 2000
-              },
-              {
-                "color": "red",
-                "value": 5000
-              }
-            ]
-          },
-          "unit": "ms"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p50"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p99"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 8
-      },
-      "id": 8,
-      "options": {
-        "legend": {
-          "calcs": ["last", "mean"],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.50, sum(rate(nop_checkout_stage_duration_ms_milliseconds_bucket{stage=\"finalize\",outcome=\"success\"}[$interval])) by (le)) or on() vector(0)",
-          "legendFormat": "p50 (median)",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.75, sum(rate(nop_checkout_stage_duration_ms_milliseconds_bucket{stage=\"finalize\",outcome=\"success\"}[$interval])) by (le)) or on() vector(0)",
-          "legendFormat": "p75",
-          "range": true,
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.90, sum(rate(nop_checkout_stage_duration_ms_milliseconds_bucket{stage=\"finalize\",outcome=\"success\"}[$interval])) by (le)) or on() vector(0)",
-          "legendFormat": "p90",
-          "range": true,
-          "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(nop_checkout_stage_duration_ms_milliseconds_bucket{stage=\"finalize\",outcome=\"success\"}[$interval])) by (le)) or on() vector(0)",
-          "legendFormat": "p95",
-          "range": true,
-          "refId": "D"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum(rate(nop_checkout_stage_duration_ms_milliseconds_bucket{stage=\"finalize\",outcome=\"success\"}[$interval])) by (le)) or on() vector(0)",
-          "legendFormat": "p99",
-          "range": true,
-          "refId": "E"
-        }
-      ],
-      "title": "Checkout Completion Time - Percentile Distribution",
       "type": "timeseries"
     },
     {
@@ -708,7 +658,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 39
       },
       "id": 3,
       "options": {
@@ -738,6 +688,123 @@
       ],
       "title": "Latest Checkout Traces",
       "type": "table"
+    },
+    {
+      "id": 13,
+      "title": "Dropoff Rate by Stage (%)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 30
+      },
+      "description": "Percentage of users who started a stage but didn't complete it. High dropoff indicates user abandonment or request timeouts.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "100 * clamp_min((sum by (stage) (rate(nop_checkout_attempts_total[$interval])) - sum by (stage) (rate(nop_checkout_stage_completions_total[$interval]))), 0) / clamp_min(sum by (stage) (rate(nop_checkout_attempts_total[$interval])), 0.000001)",
+          "legendFormat": "{{stage}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "showPoints": "never"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 10,
+                "color": "yellow"
+              },
+              {
+                "value": 30,
+                "color": "red"
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "last",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "title": "Failures by Subsystem",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 30
+      },
+      "description": "Failure rate broken down by subsystem (basket, inventory, payment_provider, order_processing). Immediately shows which component is failing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (subsystem) (rate(nop_checkout_stage_completions_total{outcome=\"failure\",subsystem=~\".+\"}[$interval]))",
+          "legendFormat": "{{subsystem}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "last",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
     }
   ],
   "refresh": "10s",
@@ -852,6 +919,6 @@
   "timezone": "browser",
   "title": "Checkout Observability",
   "uid": "checkout-observability",
-  "version": 14,
+  "version": 22,
   "weekStart": ""
 }

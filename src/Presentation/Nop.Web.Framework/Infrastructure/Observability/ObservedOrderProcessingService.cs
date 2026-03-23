@@ -23,30 +23,43 @@ public class ObservedOrderProcessingService : IOrderProcessingService
     public virtual async Task<PlaceOrderResult> PlaceOrderAsync(ProcessPaymentRequest processPaymentRequest)
     {
         var checkoutMode = CheckoutTelemetry.GetMode();
+        var stopwatch = Stopwatch.StartNew();
 
-        using var inflightCheckout = CheckoutTelemetry.TrackInflightRequest(checkoutMode);
         using var checkoutActivity = CheckoutTelemetry.StartActivity("nop.checkout.place_order", checkoutMode, "place_order");
         CheckoutTelemetry.SetResult(checkoutActivity, CheckoutTelemetry.ResultSuccess);
 
-        if (!string.IsNullOrWhiteSpace(processPaymentRequest?.PaymentMethodSystemName))
-            checkoutActivity?.SetTag("payment.method.system", processPaymentRequest.PaymentMethodSystemName);
+        var paymentMethodSystemName = processPaymentRequest?.PaymentMethodSystemName;
+
+        if (!string.IsNullOrWhiteSpace(paymentMethodSystemName))
+            checkoutActivity?.SetTag("payment.method.system", paymentMethodSystemName);
 
         try
         {
             var result = await _orderProcessingService.PlaceOrderAsync(processPaymentRequest);
+            stopwatch.Stop();
 
             if (!result.Success)
             {
                 CheckoutTelemetry.SetResult(checkoutActivity, CheckoutTelemetry.ResultFailure);
                 checkoutActivity?.SetStatus(ActivityStatusCode.Error);
+                CheckoutTelemetry.RecordCompletionTime(stopwatch.Elapsed.TotalMilliseconds, checkoutMode,
+                    CheckoutTelemetry.ResultFailure, paymentMethodSystemName);
+            }
+            else
+            {
+                CheckoutTelemetry.RecordCompletionTime(stopwatch.Elapsed.TotalMilliseconds, checkoutMode,
+                    CheckoutTelemetry.ResultSuccess, paymentMethodSystemName);
             }
 
             return result;
         }
         catch
         {
+            stopwatch.Stop();
             CheckoutTelemetry.SetResult(checkoutActivity, CheckoutTelemetry.ResultFailure);
             checkoutActivity?.SetStatus(ActivityStatusCode.Error);
+            CheckoutTelemetry.RecordCompletionTime(stopwatch.Elapsed.TotalMilliseconds, checkoutMode,
+                CheckoutTelemetry.ResultFailure, paymentMethodSystemName);
             throw;
         }
     }

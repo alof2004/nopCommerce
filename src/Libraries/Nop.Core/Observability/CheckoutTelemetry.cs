@@ -34,8 +34,8 @@ public static class CheckoutTelemetry
     private static readonly Histogram<double> StageDurationHistogram =
         NopTelemetry.Meter.CreateHistogram<double>("nop.checkout.stage_duration_ms", "ms");
 
-    private static readonly UpDownCounter<long> InflightRequestsCounter =
-        NopTelemetry.Meter.CreateUpDownCounter<long>("nop.checkout.inflight_requests");
+    private static readonly Histogram<double> CompletionTimeHistogram =
+        NopTelemetry.Meter.CreateHistogram<double>("nop.checkout.completion_time_ms", "ms");
 
     public static string GetMode()
     {
@@ -138,41 +138,25 @@ public static class CheckoutTelemetry
         RecordStageCompletion(stage, outcome);
     }
 
-    public static IDisposable TrackInflightRequest(string checkoutMode)
+    public static void RecordCompletionTime(double durationMs, string checkoutMode, string outcome,
+        string paymentMethodSystemName = null)
     {
-        var normalizedMode = NormalizeMode(checkoutMode);
         TagList tags = new()
         {
-            { "checkout_mode", normalizedMode }
+            { "checkout_mode", NormalizeMode(checkoutMode) },
+            { "outcome", outcome }
         };
 
-        InflightRequestsCounter.Add(1, tags);
+        if (!string.IsNullOrWhiteSpace(paymentMethodSystemName))
+        {
+            tags.Add("payment.method.system", paymentMethodSystemName);
+        }
 
-        return new InflightRequestScope(tags);
+        CompletionTimeHistogram.Record(durationMs, tags);
     }
 
     private static string NormalizeMode(string checkoutMode)
     {
         return string.IsNullOrWhiteSpace(checkoutMode) ? ModeStandard : checkoutMode;
-    }
-
-    private sealed class InflightRequestScope : IDisposable
-    {
-        private readonly TagList _tags;
-        private bool _disposed;
-
-        public InflightRequestScope(TagList tags)
-        {
-            _tags = tags;
-        }
-
-        public void Dispose()
-        {
-            if (_disposed)
-                return;
-
-            InflightRequestsCounter.Add(-1, _tags);
-            _disposed = true;
-        }
     }
 }
