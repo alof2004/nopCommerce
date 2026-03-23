@@ -40,11 +40,6 @@ public static class CheckoutTelemetry
     private static readonly UpDownCounter<long> ActiveCheckoutsCounter =
         NopTelemetry.Meter.CreateUpDownCounter<long>("nop.checkout.active");
 
-    private static readonly Counter<long> RetryAttemptsCounter =
-        NopTelemetry.Meter.CreateCounter<long>("nop.checkout.retry_attempts_total");
-
-    public const string IsRetryTag = "is_retry";
-
     public static string GetMode()
     {
         return Activity.Current?.GetBaggageItem(ModeTag) ?? ModeStandard;
@@ -162,11 +157,6 @@ public static class CheckoutTelemetry
             tags.Add("payment.method.system", paymentMethodSystemName);
         }
 
-        if (IsRetry())
-        {
-            tags.Add("is_retry", "true");
-        }
-
         CompletionTimeHistogram.Record(durationMs, tags);
     }
 
@@ -188,43 +178,6 @@ public static class CheckoutTelemetry
         };
 
         ActiveCheckoutsCounter.Add(-1, tags);
-    }
-
-    /// <summary>
-    /// Marks the current checkout attempt as a retry in the activity baggage.
-    /// Call this at the start of checkout if retry is detected (e.g., recent failed attempt for same cart).
-    /// </summary>
-    public static void MarkAsRetry()
-    {
-        Activity.Current?.SetBaggage(IsRetryTag, "true");
-    }
-
-    /// <summary>
-    /// Returns true if the current checkout is marked as a retry.
-    /// </summary>
-    public static bool IsRetry()
-    {
-        return Activity.Current?.GetBaggageItem(IsRetryTag) == "true";
-    }
-
-    /// <summary>
-    /// Records a retry attempt metric.
-    /// </summary>
-    /// <param name="checkoutMode">The checkout mode</param>
-    /// <param name="reason">Optional reason for retry (e.g., payment_failed, validation_error)</param>
-    public static void RecordRetryAttempt(string checkoutMode, string reason = null)
-    {
-        TagList tags = new()
-        {
-            { "checkout_mode", NormalizeMode(checkoutMode) }
-        };
-
-        if (!string.IsNullOrWhiteSpace(reason))
-        {
-            tags.Add("retry_reason", reason);
-        }
-
-        RetryAttemptsCounter.Add(1, tags);
     }
 
     private static string NormalizeMode(string checkoutMode)

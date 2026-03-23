@@ -1,4 +1,5 @@
-﻿using Nop.Core;
+﻿using System.Diagnostics;
+using Nop.Core;
 using Nop.Core.Domain.Common;
 using Nop.Core.Domain.Customers;
 using Nop.Core.Domain.Logging;
@@ -71,13 +72,27 @@ public partial class DefaultLogger : ILogger
         {
             LogLevel = logLevel,
             ShortMessage = shortMessage,
-            FullMessage = fullMessage,
+            FullMessage = EnrichFullMessage(fullMessage),
             IpAddress = _customerSettings.StoreIpAddresses ? _webHelper.GetCurrentIpAddress() : string.Empty,
             CustomerId = customer?.Id,
             PageUrl = _webHelper.GetThisPageUrl(true),
             ReferrerUrl = _webHelper.GetUrlReferrer(),
             CreatedOnUtc = DateTime.UtcNow
         };
+    }
+
+    protected virtual string EnrichFullMessage(string fullMessage)
+    {
+        var activity = Activity.Current;
+        if (activity == null || activity.TraceId == default || activity.SpanId == default)
+            return fullMessage;
+
+        var correlation = $"trace_id: {activity.TraceId}{Environment.NewLine}span_id: {activity.SpanId}";
+
+        if (string.IsNullOrWhiteSpace(fullMessage))
+            return correlation;
+
+        return $"{correlation}{Environment.NewLine}{fullMessage}";
     }
 
     #endregion
