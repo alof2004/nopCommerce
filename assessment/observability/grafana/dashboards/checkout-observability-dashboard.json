@@ -310,12 +310,13 @@
           },
           "editorMode": "code",
           "expr": "(sum(increase(nop_checkout_completion_time_ms_milliseconds_count{outcome=\"success\"}[$__range])) + sum(increase(nop_checkout_stage_completions_total{outcome=\"failure\"}[$__range]))) or on() vector(0)",
+          "instant": true,
           "legendFormat": "checkouts",
-          "range": true,
+          "range": false,
           "refId": "A"
         }
       ],
-      "title": "Checkouts In Range",
+      "title": "Completed Checkouts In Range",
       "type": "stat"
     },
     {
@@ -348,7 +349,7 @@
             "lineWidth": 2,
             "pointSize": 4,
             "showPoints": "auto",
-            "spanNulls": false,
+            "spanNulls": true,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -397,7 +398,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le, operation, entity_group) (rate(nop_checkout_repository_write_duration_ms_milliseconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, operation, entity_group) (rate(nop_checkout_repository_write_duration_ms_milliseconds_bucket[1m])))",
           "legendFormat": "{{entity_group}} {{operation}}",
           "range": true,
           "refId": "A"
@@ -436,7 +437,7 @@
             "lineWidth": 2,
             "pointSize": 4,
             "showPoints": "auto",
-            "spanNulls": false,
+            "spanNulls": true,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -482,7 +483,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(${stage_latency_quantile:raw}, sum by (le, stage) (rate(nop_checkout_stage_duration_ms_milliseconds_bucket{stage=~\"$stage\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(${stage_latency_quantile:raw}, sum by (le, stage) (rate(nop_checkout_stage_duration_ms_milliseconds_bucket{stage=~\"$stage\"}[1m])))",
           "legendFormat": "{{stage}} ${stage_latency_quantile:text}",
           "range": true,
           "refId": "A"
@@ -521,7 +522,7 @@
             "lineWidth": 2,
             "pointSize": 4,
             "showPoints": "auto",
-            "spanNulls": false,
+            "spanNulls": true,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -570,7 +571,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (outcome) (rate(nop_checkout_completion_time_ms_milliseconds_count{outcome=~\"success|failure\"}[$__rate_interval]))",
+          "expr": "sum by (outcome) (rate(nop_checkout_completion_time_ms_milliseconds_count{outcome=~\"success|failure\"}[1m]))",
           "legendFormat": "{{outcome}}",
           "range": true,
           "refId": "A"
@@ -609,7 +610,7 @@
             "lineWidth": 2,
             "pointSize": 5,
             "showPoints": "auto",
-            "spanNulls": false,
+            "spanNulls": true,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -673,7 +674,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(100 * sum(rate(nop_checkout_stage_completions_total{outcome=\"failure\"}[$__rate_interval])) / clamp_min(sum(rate(nop_checkout_completion_time_ms_milliseconds_count{outcome=\"success\"}[$__rate_interval])) + sum(rate(nop_checkout_stage_completions_total{outcome=\"failure\"}[$__rate_interval])), 0.000001)) or on() vector(0)",
+          "expr": "(100 * sum(rate(nop_checkout_stage_completions_total{outcome=\"failure\"}[1m])) / clamp_min(sum(rate(nop_checkout_completion_time_ms_milliseconds_count{outcome=\"success\"}[1m])) + sum(rate(nop_checkout_stage_completions_total{outcome=\"failure\"}[1m])), 0.000001)) or on() vector(0)",
           "legendFormat": "failure rate",
           "range": true,
           "refId": "A"
