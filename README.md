@@ -5,10 +5,16 @@ OpenTelemetry instrumentation for nopCommerce, focused on the flow:
 **Customer places an order (Checkout -> Payment -> Order -> Inventory)**.
 
 This repository contains:
-- architecture analysis: `ARCHITECTURE_ANALYSIS.md`
+- architecture analysis: `ANALYSIS.md`
 - critique: `CRITIQUE.md`
 - load test scripts: `loadtests/k6/*.js`
 - observability stack: `docker-compose.observability.yml`
+
+Assessment assets are grouped under `assessment/`:
+- diagrams: `assessment/diagrams/`
+- dashboards: `assessment/dashboards/`
+- load test assets: `assessment/load-test/`
+- observability config: `assessment/observability/`
 
 ---
 
@@ -269,6 +275,7 @@ The dashboard includes these panels:
 - **Checkout Failure Rate (%)** - Current failure rate
 - **Checkout Completion Latency p95** - Headline latency for backend order placement
 - **Checkout Completion Latency p50** - Typical completion time for backend order placement
+- **Checkouts In Range** - Total checkout attempts in the current time filter
 
 ### Row 2 (Latency Analysis)
 - **Checkout Stage Latency** - Which backend stage is slow?
@@ -289,7 +296,7 @@ The dashboard includes these panels:
 The dashboard includes one template variable for filtering:
 - **`$stage`**: Filter by stage (prepare, payment, persist_order, move_items, finalize, or All)
 
-Prometheus panels use a fixed `2m` rate window.
+Dashboard summary panels use the selected Grafana time range, and time-series panels use Grafana's `$__rate_interval`.
 
 ---
 
@@ -298,10 +305,10 @@ Prometheus panels use a fixed `2m` rate window.
 ### Checkout Failure Rate
 
 ```promql
-100 * sum(rate(nop_checkout_stage_completions_total{outcome="failure"}[2m]))
+100 * sum(increase(nop_checkout_stage_completions_total{outcome="failure"}[$__range]))
   / clamp_min(
-      sum(rate(nop_checkout_completion_time_ms_milliseconds_count{outcome="success"}[2m]))
-      + sum(rate(nop_checkout_stage_completions_total{outcome="failure"}[2m])),
+      sum(increase(nop_checkout_completion_time_ms_milliseconds_count{outcome="success"}[$__range]))
+      + sum(increase(nop_checkout_stage_completions_total{outcome="failure"}[$__range])),
       0.000001
     )
 ```
@@ -309,19 +316,26 @@ Prometheus panels use a fixed `2m` rate window.
 ### Checkout Completion Latency p95
 
 ```promql
-histogram_quantile(0.95, sum(rate(nop_checkout_completion_time_ms_milliseconds_bucket[2m])) by (le))
+histogram_quantile(0.95, sum(increase(nop_checkout_completion_time_ms_milliseconds_bucket[$__range])) by (le))
+```
+
+### Checkouts In Range
+
+```promql
+sum(increase(nop_checkout_completion_time_ms_milliseconds_count{outcome="success"}[$__range]))
+  + sum(increase(nop_checkout_stage_completions_total{outcome="failure"}[$__range]))
 ```
 
 ### Repository Write Latency p95
 
 ```promql
-histogram_quantile(0.95, sum by (le, operation, entity_group) (rate(nop_checkout_repository_write_duration_ms_milliseconds_bucket[2m])))
+histogram_quantile(0.95, sum by (le, operation, entity_group) (rate(nop_checkout_repository_write_duration_ms_milliseconds_bucket[$__rate_interval])))
 ```
 
 ### Stage-Specific Latency
 
 ```promql
-histogram_quantile(0.95, sum by (stage, le) (rate(nop_checkout_stage_duration_ms_milliseconds_bucket[2m])))
+histogram_quantile(0.95, sum by (stage, le) (rate(nop_checkout_stage_duration_ms_milliseconds_bucket[$__rate_interval])))
 ```
 
 ---
