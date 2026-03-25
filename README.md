@@ -103,51 +103,13 @@ Default admin credentials:
 
 ## 5) Selected Flow Diagram
 
-![Checkout Flow](docs/diagrams/checkout-flow.png)
+![Checkout Flow](docs/diagrams/checkout-flow.svg)
 
-*Visual representation of the checkout flow from user browser through all internal stages. [View SVG](docs/diagrams/checkout-flow.svg) for scalable version.*
-
-<details>
-<summary>Mermaid source (click to expand)</summary>
-
-```mermaid
-flowchart LR
-  A["User Browser"] --> B["CheckoutController.OpcConfirmOrder"]
-  B --> C["IOrderProcessingService.PlaceOrderAsync"]
-  C --> D["Prepare stage: validation"]
-  D --> E["Payment stage: process payment"]
-  E --> F["Persist order stage: save to DB"]
-  F --> G["Move items stage: cart -> order"]
-  G --> H["Finalize stage: inventory + events"]
-  H --> I["Order success/failure response"]
-```
-</details>
 
 ### 5.1) Observability Architecture Diagram
 
-![Observability Architecture](docs/diagrams/observability-architecture.png)
+![Observability Architecture](docs/diagrams/observability-architecture.drawio.png)
 
-*Complete observability stack showing application layers, telemetry pipeline, and visualization. [View SVG](docs/diagrams/observability-architecture.svg) for scalable version.*
-
-<details>
-<summary>Mermaid source (click to expand)</summary>
-
-```mermaid
-flowchart LR
-  U["User / k6 Load Test"] --> W["Nop.Web (ASP.NET Core)"]
-  W --> S["Nop.Services (Order Processing)"]
-  S --> D["Nop.Data / SQL Server"]
-
-  W -. "traces + metrics (OTLP)" .-> C["OpenTelemetry Collector :4317"]
-  C --> T["Tempo (traces)"]
-  C --> P["Prometheus (metrics)"]
-  T --> G["Grafana (dashboards)"]
-  P --> G
-
-  style C fill:#f9f,stroke:#333,stroke-width:2px
-  style G fill:#9cf,stroke:#333,stroke-width:2px
-```
-</details>
 
 ---
 
@@ -168,7 +130,7 @@ The checkout flow is instrumented at these boundaries:
 
 Each stage records:
 - **Trace spans** with tags (mode, stage, outcome, reason_code, subsystem)
-- **Metrics**: attempts, completions (success/failure), duration, active checkouts
+- **Metrics**: completions (success/failure), duration, and end-to-end completion time
 
 ---
 
@@ -176,30 +138,25 @@ Each stage records:
 
 The implementation tracks these OpenTelemetry metrics:
 
-### `nop.checkout.attempts_total` (Counter)
-- **Purpose**: Tracks when checkout stages are attempted (before outcome is known)
-- **Labels**: `checkout_mode`, `stage`
-- **Use case**: Funnel analysis - calculate dropoff rate
-
 ### `nop.checkout.stage_completions_total` (Counter)
 - **Purpose**: Tracks success and failure completions for each stage
 - **Labels**: `checkout_mode`, `stage`, `outcome`, `reason_code`, `subsystem`
-- **Use case**: Error rate, success rate, failure classification
+- **Use case**: Failure rate, failure classification, stage-level diagnosis
 
 ### `nop.checkout.stage_duration_ms` (Histogram)
 - **Purpose**: Latency per checkout stage
 - **Labels**: `checkout_mode`, `stage`, `outcome`, `payment.method.system` (for payment stage)
-- **Use case**: Identify which stage is slow (p50, p95, p99)
+- **Use case**: Identify which internal backend stage is slow (especially p95)
 
 ### `nop.checkout.completion_time_ms` (Histogram)
-- **Purpose**: End-to-end checkout completion time
+- **Purpose**: End-to-end backend order-placement time after `Confirm Order`
 - **Labels**: `checkout_mode`, `outcome`, `payment.method.system`
-- **Use case**: Overall user experience latency
+- **Use case**: Throughput, failure rate denominator, headline latency
 
-### `nop.checkout.active` (UpDownCounter)
-- **Purpose**: In-flight checkout requests
-- **Labels**: `checkout_mode`
-- **Use case**: Current load, capacity monitoring
+### `nop.checkout.repository_write_duration_ms` (Histogram)
+- **Purpose**: Measures database write latency during checkout at the repository boundary
+- **Labels**: `checkout_mode`, `operation`, `entity_group`, `outcome`
+- **Use case**: Distinguish persistence bottlenecks from business-logic bottlenecks inside `persist_order`
 
 **Subsystem Labels** (for failure attribution):
 - `basket` - Shopping cart validation failures
@@ -212,9 +169,11 @@ The implementation tracks these OpenTelemetry metrics:
 
 ## 8) Run Load Tests
 
-The repository includes several load test profiles using k6.
+The repository includes a primary checkout load test and a few supporting scenarios using k6. The main goal is to exercise the backend order-placement flow after `Confirm Order`, not model UI abandonment.
 
 ### Quick Smoke Test (1 iteration)
+
+Verify the checkout flow works end-to-end:
 
 ```bash
 docker run --rm --network host \
@@ -224,67 +183,51 @@ docker run --rm --network host \
   grafana/k6:0.49.0 run --vus 1 --iterations 1 /scripts/checkout-observability.js
 ```
 
-### Default Load Test (staged ramp-up)
+---
+
+### Primary Load Test
+
+**File:** `loadtests/k6/checkout-observability.js`
+
+This is the main load test for the dashboard and demo. It drives the normal one-page checkout flow until `OpcConfirmOrder`, which then exercises `OrderProcessingService.PlaceOrderAsync` and the internal backend stages.
 
 ```bash
 docker run --rm --network host \
   -e BASE_URL=http://localhost \
   -e PAYMENT_METHOD=Payments.Manual \
   -e THINK_TIME_SECONDS=1 \
-  -v "$(pwd)/loadtests/k6:/scripts" \
-  grafana/k6:0.49.0 run /scripts/checkout-observability.js
-```
-
-Default profile:
-- Stage 1: 0 → 10 VUs (30s)
-- Stage 2: 10 → 50 VUs (2m)
-- Stage 3: 50 → 100 VUs (3m)
-- Stage 4: 100 → 0 VUs (30s)
-
-### Steady Load (fixed VUs, continuous)
-
-```bash
-docker run --rm --network host \
-  -e BASE_URL=http://localhost \
-  -e PAYMENT_METHOD=Payments.Manual \
-  -e K6_FIXED_VUS=5 \
-  -e K6_FIXED_DURATION=24h \
-  -v "$(pwd)/loadtests/k6:/scripts" \
-  grafana/k6:0.49.0 run /scripts/checkout-observability-steady.js
-```
-
-Adjust `K6_FIXED_VUS` for different load levels (5, 10, 20, 30, 50, 100).
-
-### Realistic User Abandonment Test
-
-```bash
-docker run --rm --network host \
-  -e BASE_URL=http://localhost \
-  -e PAYMENT_METHOD=Payments.Manual \
-  -e ADD_TO_CART_PATH=/addproducttocart/catalog/5/1/1 \
-  -e IMPATIENT_USER_PERCENT=0.30 \
-  -e NORMAL_REQUEST_TIMEOUT=10s \
-  -e IMPATIENT_CONFIRM_TIMEOUT=3s \
   -e K6_STAGE_1_DURATION=30s \
-  -e K6_STAGE_1_TARGET=10 \
+  -e K6_STAGE_1_TARGET=5 \
   -e K6_STAGE_2_DURATION=2m \
-  -e K6_STAGE_2_TARGET=15 \
+  -e K6_STAGE_2_TARGET=10 \
   -e K6_STAGE_3_DURATION=3m \
   -e K6_STAGE_3_TARGET=15 \
   -e K6_STAGE_4_DURATION=30s \
   -e K6_STAGE_4_TARGET=0 \
   -v "$(pwd)/loadtests/k6:/scripts" \
-  grafana/k6:0.49.0 run /scripts/checkout-realistic-abandonment.js
+  grafana/k6:0.49.0 run /scripts/checkout-observability.js
 ```
 
-This test simulates real user behavior:
-- 70% of users wait patiently
-- 30% of users are impatient (3s timeout on confirm order)
-- Generates dropoff metrics when slow responses occur
+**What it demonstrates:**
+- End-to-end backend order placement after `Confirm Order`
+- Throughput changes under load
+- p95 completion latency and p95 stage latency
+- Failure-rate and trace drilldown when errors occur
 
-### Controlled Failure Tests
+**Metrics generated:**
+- `nop.checkout.completion_time_ms`
+- `nop.checkout.stage_duration_ms`
+- `nop.checkout.stage_completions_total`
 
-**Business validation failures:**
+This is the **primary test for demonstrating the observability dashboard** because it aligns directly with the metrics and traces being analyzed.
+
+---
+
+### Controlled Business Failure Test
+
+**File:** `loadtests/k6/checkout-business-failure.js`
+
+This test uses a **product configured to fail validation** (e.g., out of stock, minimum order subtotal not met):
 
 ```bash
 docker run --rm --network host \
@@ -298,47 +241,18 @@ docker run --rm --network host \
   grafana/k6:0.49.0 run /scripts/checkout-business-failure.js
 ```
 
-Uses a product configured to fail (e.g., out of stock, minimum order subtotal not met).
+**What it demonstrates:**
+- **Controlled validation failures** (business rule violations)
+- Low noise (1 VU) for clear failure patterns
+- **Subsystem-specific failures** (e.g., `basket`, `inventory`)
+- **Reason code tracking** (e.g., `validation`, `inventory_exception`)
 
-**Minimum order interval failures:**
+**Metrics generated:**
+- Failures tracked by `stage` and `reason_code`
+- Subsystem attribution (`subsystem` label)
+- Clean failure patterns in dashboard
 
-Run the script:
-
-```bash
-bash ./scripts/run-min-interval-load.sh
-```
-
-Triggers "minimum interval between orders" validation failures.
-
-### Controlled Degradation (for dashboard demo)
-
-```bash
-# Start stack with resource constraints
-docker compose -f docker-compose.yml -f docker-compose.observability.yml -f docker-compose.loadtest.yml up -d --build
-
-# Run degradation profile (creates interesting graphs without crashing)
-docker run --rm --network host \
-  -e BASE_URL=http://localhost \
-  -e K6_STAGE_1_DURATION=30s \
-  -e K6_STAGE_1_TARGET=15 \
-  -e K6_STAGE_2_DURATION=2m \
-  -e K6_STAGE_2_TARGET=30 \
-  -e K6_STAGE_3_DURATION=2m \
-  -e K6_STAGE_3_TARGET=40 \
-  -e K6_STAGE_4_DURATION=30s \
-  -e K6_STAGE_4_TARGET=0 \
-  -v "$(pwd)/loadtests/k6:/scripts" \
-  grafana/k6:0.49.0 run /scripts/checkout-observability.js
-
-# Stop when done
-docker compose -f docker-compose.yml -f docker-compose.observability.yml -f docker-compose.loadtest.yml down
-```
-
-This profile gradually increases load to show degradation in the dashboard:
-- Stage 1: 0 → 15 VUs (30s)
-- Stage 2: 15 → 30 VUs (2m)
-- Stage 3: 30 → 40 VUs (2m)
-- Stage 4: 40 → 0 VUs (30s)
+This test is ideal for demonstrating **how the observability system classifies and tracks specific failure types**.
 
 ---
 
@@ -352,75 +266,62 @@ Navigate to:
 The dashboard includes these panels:
 
 ### Top Row (Health Indicators)
-- **Checkout Error Rate (%)** - Current error rate (required metric)
-- **Active Checkouts** - In-flight requests
-- **Median Checkout Time (p50)** - Typical user experience
+- **Checkout Failure Rate (%)** - Current failure rate
+- **Checkout Completion Latency p95** - Headline latency for backend order placement
+- **Checkout Completion Latency p50** - Typical completion time for backend order placement
 
-### Row 2 (Stage Analysis)
-- **Checkout Stage Latency (p95 / p99)** - Which stage is slow?
-- **Stage Success Rate** - Early warning indicator (detects degradation before critical errors)
+### Row 2 (Latency Analysis)
+- **Checkout Stage Latency** - Which backend stage is slow?
+- **Successful vs Failed Completions Over Time** - When does traffic shift from success to failure?
 
 ### Row 3 (Failure Analysis)
-- **Checkout Failures by Stage and Reason** - What's failing and why?
-- **Checkout Error Rate Over Time** - When did problems start?
+- **Checkout Repository Write Latency p95** - Is the `persist_order` slowdown coming from repository writes?
+- **Checkout Failure Rate Over Time** - When did problems start?
 
 ### Row 4 (Advanced Diagnostics)
-- **Dropoff Rate by Stage (%)** - User abandonment/timeout rate
-- **Failures by Subsystem** - Which component is failing? (basket, inventory, payment_provider, order_processing)
+- **Checkout Failures by Reason Code** - Which error class is dominant?
 
 ### Bottom Row (Trace Drilldown)
-- **Latest Checkout Traces** - Link to Tempo for detailed trace inspection
+- **Latest Checkout Traces** - Recent checkout traces for the selected flow
 
 ### Dashboard Variables
 
-The dashboard includes template variables for filtering:
+The dashboard includes one template variable for filtering:
 - **`$stage`**: Filter by stage (prepare, payment, persist_order, move_items, finalize, or All)
-- **`$interval`**: Rate window (1m, 2m, 5m, 10m) - default 2m
+
+Prometheus panels use a fixed `2m` rate window.
 
 ---
 
 ## 10) Key Prometheus Queries
 
-### Checkout Error Rate
+### Checkout Failure Rate
 
 ```promql
 100 * sum(rate(nop_checkout_stage_completions_total{outcome="failure"}[2m]))
-  / sum(rate(nop_checkout_stage_completions_total[2m]))
+  / clamp_min(
+      sum(rate(nop_checkout_completion_time_ms_milliseconds_count{outcome="success"}[2m]))
+      + sum(rate(nop_checkout_stage_completions_total{outcome="failure"}[2m])),
+      0.000001
+    )
 ```
 
-### Stage Success Rate (Early Warning)
+### Checkout Completion Latency p95
 
 ```promql
-100 * (sum by (stage) (rate(nop_checkout_stage_completions_total{outcome="success"}[2m]))
-  / sum by (stage) (rate(nop_checkout_stage_completions_total[2m])))
+histogram_quantile(0.95, sum(rate(nop_checkout_completion_time_ms_milliseconds_bucket[2m])) by (le))
 ```
 
-### Dropoff Rate (Abandonment)
+### Repository Write Latency p95
 
 ```promql
-100 * ((rate(nop_checkout_attempts_total[2m])
-  - rate(nop_checkout_stage_completions_total[2m]))
-  / clamp_min(rate(nop_checkout_attempts_total[2m]), 0.000001))
-```
-
-### Failures by Subsystem
-
-```promql
-sum by (subsystem) (rate(nop_checkout_stage_completions_total{outcome="failure",subsystem=~".+"}[2m]))
-```
-
-### Checkout Latency (p50, p95, p99)
-
-```promql
-histogram_quantile(0.50, sum(rate(nop_checkout_completion_time_ms_bucket[2m])) by (le))
-histogram_quantile(0.95, sum(rate(nop_checkout_completion_time_ms_bucket[2m])) by (le))
-histogram_quantile(0.99, sum(rate(nop_checkout_completion_time_ms_bucket[2m])) by (le))
+histogram_quantile(0.95, sum by (le, operation, entity_group) (rate(nop_checkout_repository_write_duration_ms_milliseconds_bucket[2m])))
 ```
 
 ### Stage-Specific Latency
 
 ```promql
-histogram_quantile(0.95, sum by (stage, le) (rate(nop_checkout_stage_duration_ms_bucket[2m])))
+histogram_quantile(0.95, sum by (stage, le) (rate(nop_checkout_stage_duration_ms_milliseconds_bucket[2m])))
 ```
 
 ---
@@ -439,93 +340,3 @@ Traces are automatically exported to Tempo and can be viewed in Grafana:
 Or use the **Latest Checkout Traces** panel in the dashboard for quick access.
 
 Example trace structure:
-
-```
-POST /Checkout/OpcConfirmOrder
-└── nop.checkout.place_order
-    ├── nop.checkout.prepare
-    ├── nop.checkout.payment
-    ├── nop.checkout.persist_order
-    │   ├── nop.repository.insert (Order)
-    │   └── nop.event.publish (EntityInsertedEvent<Order>)
-    ├── nop.checkout.move_items
-    │   └── nop.repository.delete (ShoppingCartItem)
-    └── nop.checkout.finalize
-        ├── nop.repository.update (Product - inventory)
-        └── nop.event.publish (OrderPlacedEvent)
-```
-
----
-
-## 12) Deliverables in Repo
-
-- **`ARCHITECTURE_ANALYSIS.md`** - Architecture analysis and observability design
-- **`CRITIQUE.md`** - Architectural critique and reflection
-- **`loadtests/k6/`** - Load test scripts
-- **`observability/`** - OpenTelemetry Collector, Tempo, Prometheus, Grafana configs
-- **`observability/grafana/dashboards/`** - Provisioned Grafana dashboard
-
----
-
-## 13) Useful Commands
-
-```bash
-# Start/stop stack
-docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --build
-docker compose -f docker-compose.yml -f docker-compose.observability.yml down
-docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --build --force-recreate
-
-# View logs
-docker compose -f docker-compose.yml -f docker-compose.observability.yml logs -f
-docker logs -f nopcommerce
-docker compose -f docker-compose.yml -f docker-compose.observability.yml logs -f otel-collector
-docker compose -f docker-compose.yml -f docker-compose.observability.yml logs -f grafana
-
-# Check status
-docker compose -f docker-compose.yml -f docker-compose.observability.yml ps
-```
-
----
-
-## 14) Implementation Highlights
-
-### Boundary-Based Instrumentation
-
-Observability is added at architectural boundaries instead of scattering it everywhere:
-- **Decorator** around `IOrderProcessingService` for root checkout span
-- **Repository layer** for database operations
-- **Event publisher** for event fan-out
-- **Controller layer** for HTTP entry points
-
-### Privacy by Design
-
-A central `SensitiveActivitySanitizingProcessor` removes sensitive data before export:
-- Credit card numbers, CVV, expiry
-- Customer email, phone, IP
-- Full URLs with query strings
-- Exception messages with PII
-- Address data
-- Payment transaction IDs
-
-### Modular Telemetry Design
-
-- **`NopTelemetry`** - Shared primitives (ActivitySource, Meter)
-- **`CheckoutTelemetry`** - Checkout-specific tags, metrics, helpers
-- Future areas (catalog, search, etc.) can add their own telemetry modules without coupling
-
-### Early Warning Metrics
-
-The **Stage Success Rate** metric provides early warning of degradation:
-- Tracks both success AND failure (not just failures)
-- Shows degradation before error rate becomes critical
-- Example: Payment stage at 97% success alerts before 5% overall error rate
-
-### Failure Attribution
-
-The **subsystem label** immediately shows which component is failing:
-- `basket` → Alert cart/validation team
-- `inventory` → Alert inventory/stock team
-- `payment_provider` → Alert payments/gateway team
-- `order_processing` → Alert backend/database team
-
----

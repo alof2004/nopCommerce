@@ -25,9 +25,6 @@ public static class CheckoutTelemetry
     public const string SubsystemOrderProcessing = "order_processing";
     public const string SubsystemGeneral = "general";
 
-    private static readonly Counter<long> AttemptsCounter =
-        NopTelemetry.Meter.CreateCounter<long>("nop.checkout.attempts_total");
-
     private static readonly Counter<long> StageCompletionsCounter =
         NopTelemetry.Meter.CreateCounter<long>("nop.checkout.stage_completions_total");
 
@@ -36,9 +33,6 @@ public static class CheckoutTelemetry
 
     private static readonly Histogram<double> CompletionTimeHistogram =
         NopTelemetry.Meter.CreateHistogram<double>("nop.checkout.completion_time_ms", "ms");
-
-    private static readonly UpDownCounter<long> ActiveCheckoutsCounter =
-        NopTelemetry.Meter.CreateUpDownCounter<long>("nop.checkout.active");
 
     public static string GetMode()
     {
@@ -75,21 +69,6 @@ public static class CheckoutTelemetry
         activity?.SetTag(StageTag, stage);
         activity?.SetTag(ResultTag, ResultFailure);
         activity?.SetTag(FailureReasonTag, reasonCode);
-    }
-
-    /// <summary>
-    /// Records a checkout stage attempt (called at the start of a stage, before outcome is known).
-    /// </summary>
-    /// <param name="stage">The checkout stage (prepare, payment, persist_order, move_items, finalize)</param>
-    public static void RecordStageAttempt(string stage, string checkoutMode)
-    {
-        TagList tags = new()
-        {
-            { "checkout_mode", NormalizeMode(checkoutMode) },
-            { "stage", stage }
-        };
-
-        AttemptsCounter.Add(1, tags);
     }
 
     /// <summary>
@@ -158,26 +137,6 @@ public static class CheckoutTelemetry
         }
 
         CompletionTimeHistogram.Record(durationMs, tags);
-    }
-
-    public static void IncrementActiveCheckouts(string checkoutMode)
-    {
-        TagList tags = new()
-        {
-            { "checkout_mode", NormalizeMode(checkoutMode) }
-        };
-
-        ActiveCheckoutsCounter.Add(1, tags);
-    }
-
-    public static void DecrementActiveCheckouts(string checkoutMode)
-    {
-        TagList tags = new()
-        {
-            { "checkout_mode", NormalizeMode(checkoutMode) }
-        };
-
-        ActiveCheckoutsCounter.Add(-1, tags);
     }
 
     private static string NormalizeMode(string checkoutMode)

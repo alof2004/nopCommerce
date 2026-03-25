@@ -5,6 +5,7 @@ using Nop.Core;
 using Nop.Core.Caching;
 using Nop.Core.Configuration;
 using Nop.Core.Domain.Common;
+using Nop.Core.Domain.Orders;
 using Nop.Core.Events;
 using Nop.Core.Observability;
 
@@ -351,6 +352,17 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
         activity.AddEvent(new ActivityEvent("exception"));
     }
 
+    protected static string GetEntityGroup()
+    {
+        return typeof(TEntity) switch
+        {
+            var type when type == typeof(Order) => "order",
+            var type when type == typeof(OrderItem) => "order_item",
+            var type when type == typeof(ShoppingCartItem) => "shopping_cart",
+            _ => "other"
+        };
+    }
+
     /// <summary>
     /// Insert the entity entry
     /// </summary>
@@ -362,6 +374,8 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
         ArgumentNullException.ThrowIfNull(entity);
 
         using var activity = StartRepositoryActivity("insert", publishEvent);
+        var stopwatch = Stopwatch.StartNew();
+        var outcome = CheckoutTelemetry.ResultSuccess;
 
         try
         {
@@ -373,8 +387,14 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
         }
         catch
         {
+            outcome = CheckoutTelemetry.ResultFailure;
             MarkActivityFailed(activity);
             throw;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            RepositoryTelemetry.RecordWriteDuration(stopwatch.Elapsed.TotalMilliseconds, "insert", GetEntityGroup(), outcome);
         }
     }
 
@@ -389,6 +409,8 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
         ArgumentNullException.ThrowIfNull(entities);
 
         using var activity = StartRepositoryActivity("insert", publishEvent);
+        var stopwatch = Stopwatch.StartNew();
+        var outcome = CheckoutTelemetry.ResultSuccess;
 
         try
         {
@@ -405,8 +427,14 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
         }
         catch
         {
+            outcome = CheckoutTelemetry.ResultFailure;
             MarkActivityFailed(activity);
             throw;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            RepositoryTelemetry.RecordWriteDuration(stopwatch.Elapsed.TotalMilliseconds, "insert", GetEntityGroup(), outcome);
         }
     }
 
@@ -435,6 +463,8 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
         ArgumentNullException.ThrowIfNull(entity);
 
         using var activity = StartRepositoryActivity("update", publishEvent);
+        var stopwatch = Stopwatch.StartNew();
+        var outcome = CheckoutTelemetry.ResultSuccess;
 
         try
         {
@@ -446,8 +476,14 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
         }
         catch
         {
+            outcome = CheckoutTelemetry.ResultFailure;
             MarkActivityFailed(activity);
             throw;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            RepositoryTelemetry.RecordWriteDuration(stopwatch.Elapsed.TotalMilliseconds, "update", GetEntityGroup(), outcome);
         }
     }
 
@@ -465,6 +501,8 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
             return;
 
         using var activity = StartRepositoryActivity("update", publishEvent);
+        var stopwatch = Stopwatch.StartNew();
+        var outcome = CheckoutTelemetry.ResultSuccess;
 
         try
         {
@@ -479,8 +517,14 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
         }
         catch
         {
+            outcome = CheckoutTelemetry.ResultFailure;
             MarkActivityFailed(activity);
             throw;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            RepositoryTelemetry.RecordWriteDuration(stopwatch.Elapsed.TotalMilliseconds, "update", GetEntityGroup(), outcome);
         }
     }
 
@@ -495,6 +539,8 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
         ArgumentNullException.ThrowIfNull(entity);
 
         using var activity = StartRepositoryActivity("delete", publishEvent);
+        var stopwatch = Stopwatch.StartNew();
+        var outcome = CheckoutTelemetry.ResultSuccess;
 
         try
         {
@@ -516,8 +562,14 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
         }
         catch
         {
+            outcome = CheckoutTelemetry.ResultFailure;
             MarkActivityFailed(activity);
             throw;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            RepositoryTelemetry.RecordWriteDuration(stopwatch.Elapsed.TotalMilliseconds, "delete", GetEntityGroup(), outcome);
         }
     }
 
@@ -535,6 +587,8 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
             return;
 
         using var activity = StartRepositoryActivity("delete", publishEvent);
+        var stopwatch = Stopwatch.StartNew();
+        var outcome = CheckoutTelemetry.ResultSuccess;
 
         try
         {
@@ -561,8 +615,14 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
         }
         catch
         {
+            outcome = CheckoutTelemetry.ResultFailure;
             MarkActivityFailed(activity);
             throw;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            RepositoryTelemetry.RecordWriteDuration(stopwatch.Elapsed.TotalMilliseconds, "delete", GetEntityGroup(), outcome);
         }
     }
 
@@ -579,6 +639,8 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
         ArgumentNullException.ThrowIfNull(predicate);
 
         using var activity = StartRepositoryActivity("delete", publishEvent: false);
+        var stopwatch = Stopwatch.StartNew();
+        var outcome = CheckoutTelemetry.ResultSuccess;
 
         try
         {
@@ -590,8 +652,14 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
         }
         catch
         {
+            outcome = CheckoutTelemetry.ResultFailure;
             MarkActivityFailed(activity);
             throw;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            RepositoryTelemetry.RecordWriteDuration(stopwatch.Elapsed.TotalMilliseconds, "delete", GetEntityGroup(), outcome);
         }
     }
 

@@ -34,6 +34,7 @@ export const options = {
 };
 
 export default function () {
+  resetAnonymousSession();
   const fakeIdentity = buildFakeIdentity();
   const patienceProfile = selectPatienceProfile();
 
@@ -179,6 +180,11 @@ export default function () {
   } catch (error) {
     console.log(`[${patienceProfile.name}] checkout abandoned: ${error.message}`);
   }
+}
+
+function resetAnonymousSession() {
+  const jar = http.cookieJar();
+  jar.clear(`${BASE_URL}/`);
 }
 
 function selectPatienceProfile() {

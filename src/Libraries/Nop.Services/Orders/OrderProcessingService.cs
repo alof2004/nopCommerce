@@ -521,15 +521,17 @@ public partial class OrderProcessingService : IOrderProcessingService
         if (!await ValidateMinOrderSubtotalAmountAsync(details.Cart))
         {
             var minOrderSubtotalAmount = await _currencyService.ConvertFromPrimaryStoreCurrencyAsync(_orderSettings.MinOrderSubtotalAmount, currentCurrency);
-            throw new NopException(string.Format(await _localizationService.GetResourceAsync("Checkout.MinOrderSubtotalAmount"),
-                await _priceFormatter.FormatPriceAsync(minOrderSubtotalAmount, true, false)));
+            throw new CheckoutValidationException("minimum_order_subtotal",
+                string.Format(await _localizationService.GetResourceAsync("Checkout.MinOrderSubtotalAmount"),
+                    await _priceFormatter.FormatPriceAsync(minOrderSubtotalAmount, true, false)));
         }
 
         if (!await ValidateMinOrderTotalAmountAsync(details.Cart))
         {
             var minOrderTotalAmount = await _currencyService.ConvertFromPrimaryStoreCurrencyAsync(_orderSettings.MinOrderTotalAmount, currentCurrency);
-            throw new NopException(string.Format(await _localizationService.GetResourceAsync("Checkout.MinOrderTotalAmount"),
-                await _priceFormatter.FormatPriceAsync(minOrderTotalAmount, true, false)));
+            throw new CheckoutValidationException("minimum_order_total",
+                string.Format(await _localizationService.GetResourceAsync("Checkout.MinOrderTotalAmount"),
+                    await _priceFormatter.FormatPriceAsync(minOrderTotalAmount, true, false)));
         }
     }
 
@@ -1590,6 +1592,9 @@ public partial class OrderProcessingService : IOrderProcessingService
 
         static string GetFailureReasonCode(string stage, Exception exception)
         {
+            if (exception is CheckoutValidationException checkoutValidationException)
+                return checkoutValidationException.ReasonCode;
+
             return stage switch
             {
                 "prepare" => "validation",
@@ -1636,9 +1641,6 @@ public partial class OrderProcessingService : IOrderProcessingService
 
         async Task<T> RunCheckoutStageAsync<T>(string stage, Func<Task<T>> action, string paymentMethodSystemName = null)
         {
-            // Record attempt for funnel tracking
-            CheckoutTelemetry.RecordStageAttempt(stage, checkoutMode);
-
             using var stageActivity = CheckoutTelemetry.StartActivity($"nop.checkout.{stage}", checkoutMode, stage);
             CheckoutTelemetry.SetResult(stageActivity, CheckoutTelemetry.ResultSuccess);
 
@@ -1668,9 +1670,6 @@ public partial class OrderProcessingService : IOrderProcessingService
 
         async Task RunCheckoutStageBlockAsync(string stage, Func<Task> action, string paymentMethodSystemName = null)
         {
-            // Record attempt for funnel tracking
-            CheckoutTelemetry.RecordStageAttempt(stage, checkoutMode);
-
             using var stageActivity = CheckoutTelemetry.StartActivity($"nop.checkout.{stage}", checkoutMode, stage);
             CheckoutTelemetry.SetResult(stageActivity, CheckoutTelemetry.ResultSuccess);
 
@@ -1710,9 +1709,6 @@ public partial class OrderProcessingService : IOrderProcessingService
             try
             {
                 ProcessPaymentResult processPaymentResult;
-
-                // Record payment stage attempt for funnel tracking
-                CheckoutTelemetry.RecordStageAttempt("payment", checkoutMode);
 
                 using (var paymentActivity = CheckoutTelemetry.StartActivity("nop.checkout.payment", checkoutMode, "payment"))
                 {

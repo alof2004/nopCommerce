@@ -1,13 +1,31 @@
+%% Mermaid captures the logical structure, but the checked-in SVG/PNG are hand-laid out
+%% for the presentation because Mermaid keeps collapsing this graph into a single lane.
 flowchart TB
-  A["User Browser"] --> B["CheckoutController.OpcConfirmOrder"]
-  B --> C["IOrderProcessingService.PlaceOrderAsync"]
-  C --> D["Prepare stage: validation"]
-  D --> E["Payment stage: process payment"]
-  E --> F["Persist order stage: save to DB"]
-  F --> G["Move items stage: cart -> order"]
-  G --> H["Finalize stage: inventory + events"]
-  H --> I["Order success/failure response"]
+  subgraph T[" "]
+    direction LR
+    A([Confirm Order])
+    B["CheckoutController"]
+    C["OrderProcessingService"]
 
-  style A fill:#e1f5ff,stroke:#333,stroke-width:2px
-  style C fill:#fff3cd,stroke:#333,stroke-width:2px
-  style I fill:#d4edda,stroke:#333,stroke-width:2px
+    A --> B --> C
+  end
+
+  subgraph S["Main stages"]
+    direction LR
+    D[Prepare]
+    E[Payment]
+    F[Persist Order]
+    G[Move Items]
+    H[Finalize]
+
+    D --> E --> F --> G --> H
+  end
+
+  C --> D
+
+  classDef entry fill:#dff4ff,stroke:#205375,stroke-width:2px,color:#102a43;
+  classDef file fill:#fff4d6,stroke:#b45309,stroke-width:2px,color:#4a2d00;
+  style T fill:none,stroke:none;
+
+  class A entry;
+  class B,C,D,E,F,G,H file;

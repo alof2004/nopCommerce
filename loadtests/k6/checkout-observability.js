@@ -1,3 +1,10 @@
+/**
+ * Checkout Observability Load Test
+ *
+ * This test exercises the full checkout flow and generates telemetry for:
+ * - Checkout stage duration and completion (prepare, payment, persist_order, move_items, finalize)
+ * - End-to-end checkout completion time
+ */
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import { parseHTML } from 'k6/html';
@@ -30,14 +37,21 @@ export const options = {
   }
 };
 
-export default function () {
+export function runCheckoutFlow(config = {}) {
+  const paymentMethodSystemName = config.paymentMethod || PAYMENT_METHOD;
+  const addToCartPath = config.addToCartPath || ADD_TO_CART_PATH;
+  const expectFailure = Boolean(config.expectFailure);
+  const failureContext = config.failureContext || 'checkout';
+  const thinkTimeSeconds = Object.prototype.hasOwnProperty.call(config, 'thinkTimeSeconds')
+    ? config.thinkTimeSeconds
+    : THINK_TIME_SECONDS;
   const fakeIdentity = buildFakeIdentity();
 
   const home = getPage('/');
   assertStoreReady(home);
 
   const antiForgeryToken = extractAntiForgeryToken(home.body);
-  const addToCart = addViableHomepageProductToCart(home.body, antiForgeryToken);
+  const addToCart = addViableHomepageProductToCart(home.body, antiForgeryToken, addToCartPath);
 
   check(addToCart.responseJson, {
     'product added to cart successfully': (data) => Boolean(data.success && data.updatetopcartsectionhtml)
@@ -126,9 +140,9 @@ export default function () {
   }
 
   nextSectionHtml = getUpdateSectionHtml(stepResponse);
-  const paymentMethod = extractPaymentMethod(nextSectionHtml, PAYMENT_METHOD);
+  const paymentMethod = extractPaymentMethod(nextSectionHtml, paymentMethodSystemName);
   if (!paymentMethod) {
-    fail(`Payment method '${PAYMENT_METHOD}' not found in checkout response.`);
+    fail(`Payment method '${paymentMethodSystemName}' not found in checkout response.`);
   }
 
   stepResponse = parseJson(postForm('/checkout/OpcSavePaymentMethod/', {
@@ -141,7 +155,7 @@ export default function () {
     'payment method step succeeded': (data) => !data.error
   }) || fail(`Payment method selection failed: ${JSON.stringify(stepResponse)}`);
 
-  const paymentInfoPayload = buildPaymentInfoPayload(PAYMENT_METHOD);
+  const paymentInfoPayload = buildPaymentInfoPayload(paymentMethodSystemName);
   stepResponse = parseJson(postForm('/checkout/OpcSavePaymentInfo/', paymentInfoPayload, { step: 'payment_info' }), 'opc payment info');
   check(stepResponse, {
     'payment info step succeeded': (data) => !data.error
@@ -153,6 +167,15 @@ export default function () {
   };
 
   stepResponse = parseJson(postForm('/checkout/OpcConfirmOrder/', confirmPayload, { step: 'confirm_order' }), 'opc confirm order');
+
+  if (expectFailure) {
+    check(stepResponse, {
+      [`${failureContext} failed as expected`]: (data) => Boolean(!data.success && !data.redirect)
+    }) || fail(`Expected ${failureContext} failure, but confirm order succeeded: ${JSON.stringify(stepResponse)}`);
+
+    sleep(thinkTimeSeconds);
+    return stepResponse;
+  }
 
   check(stepResponse, {
     'confirm order returned success or redirect': (data) => Boolean(data.success || data.redirect)
@@ -170,7 +193,12 @@ export default function () {
     });
   }
 
-  sleep(THINK_TIME_SECONDS);
+  sleep(thinkTimeSeconds);
+  return stepResponse;
+}
+
+export default function () {
+  runCheckoutFlow();
 }
 
 function buildFakeIdentity() {
@@ -298,8 +326,8 @@ function extractAntiForgeryToken(html) {
   return token;
 }
 
-function addViableHomepageProductToCart(homeHtml, antiForgeryToken) {
-  const candidatePaths = ADD_TO_CART_PATH ? [stripOrigin(ADD_TO_CART_PATH)] : discoverAddToCartPaths(homeHtml);
+function addViableHomepageProductToCart(homeHtml, antiForgeryToken, explicitAddToCartPath = '') {
+  const candidatePaths = explicitAddToCartPath ? [stripOrigin(explicitAddToCartPath)] : discoverAddToCartPaths(homeHtml);
   const attempts = [];
 
   for (const candidatePath of candidatePaths) {

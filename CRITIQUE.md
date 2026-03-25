@@ -8,79 +8,77 @@
 | NMEC | 113480  |
 |  |    |
 
-## What Helped and What Hindered
+## What Helped and What Didn't
 
-What helped me most was that nopCommerce is layered in a way that is actually readable once I spent some time in `Nop.Services` and `Nop.Core`. I could see fairly quickly where the checkout logic was orchestrated, where data writes happened, and where side effects were fanned out. That gave me a few strong places to instrument without touching every class involved in checkout.
+Honestly, nopCommerce was way more readable than I expected once I actually sat down with `Nop.Services` and `Nop.Core` for a while. After the initial "what is all this" phase, I could see where checkout actually happened, where stuff got saved to the database, and where events got fired off. That made it way easier to figure out where to add tracing without having to touch like every single class.
 
-The three most useful seams were `IOrderProcessingService`, `EntityRepository`, and `IEventPublisher`. Those boundaries are basically the reason the final trace makes sense. The request starts in `CheckoutController`, the main backend work is rooted at the order-processing service boundary, repository writes stay visible, and event publishing still shows up in the trace without me having to instrument every single consumer.
+The three spots that saved me were `IOrderProcessingService`, `EntityRepository`, and `IEventPublisher`. These ended up being perfect places to instrument because they're already natural boundaries in the code. The HTTP request comes in through `CheckoutController`, the actual order placement logic happens in the order processing service, database writes go through the repository, and events get published through the event publisher. I didn't have to guess where things were happening - the architecture kind of told me where to look.
 
-What made the work harder is that checkout is not one clean service call. In practice it is spread across controllers, service code, plugins, and one-page checkout AJAX endpoints. So even though the architecture is layered, the real runtime behavior still cuts across several parts of the system. That is why the load test had to do much more than call one endpoint. It had to deal with anti-forgery tokens, cart state, billing, shipping, payment selection, payment info, and final confirmation, which makes sense since the checkout flow is built as a sequence of dependent steps rather than one isolated backend operation. Because of that, it was also harder to find the best instrumentation points at first. I could not just trace one method and be done with it. I had to follow how state moved between controller actions, service calls, and plugin logic before I could decide where tracing would actually be meaningful instead of just noisy.
+The annoying part though is that checkout isn't just one clean function call. It's spread across controllers, services, plugins, and a bunch of AJAX endpoints for the one-page checkout flow. So yeah, the code is layered, but the actual checkout flow at runtime bounces around between all these different pieces. That's why writing the load test was such a pain - I couldn't just hit one endpoint and call it a day. I had to deal with anti-forgery tokens, cart state, billing forms, shipping forms, payment method selection, payment info, and then finally the confirmation. It makes sense why it's like that (checkout IS a multi-step process), but it made finding good instrumentation points harder. I couldn't just trace one method and be done. I had to actually follow the flow through multiple controller actions and service calls to figure out what would give useful information vs just noise.
 
-The plugin and event model also made observability less predictable. `IEventPublisher` is a very good instrumentation boundary, but its consumers are discovered dynamically, so the full behavior is not obvious just from reading the code. Payment plugins create the same kind of problem. The checkout flow is not fully contained in one service or one assembly, which is good for extensibility but harder for observability.
+The plugin system made things less predictable too. `IEventPublisher` ended up being a great place to add tracing, but all the event consumers get discovered at runtime, so you can't just look at the code and know what's going to happen. The same thing happens with payment plugins as the checkout flow isn't all in one place, it's spread across the core system and whatever plugins are installed.
 
-Another smaller issue I noticed was configuration visibility. Some settings exist in the backend but are not exposed in a very friendly way in the admin UI. During testing, that meant some failure modes were easier to trigger through direct configuration changes or SQL than through the normal administration surface. That is not a tracing problem by itself, but it matters because it makes controlled failure testing less repeatable.
+One smaller thing that caused some confusion: some settings exist in the backend but the admin UI doesn't really expose them in a user-friendly way. During testing, this meant I sometimes had to edit configuration files directly or even update the database with SQL to trigger certain failure scenarios. That's not really a tracing problem, but it made testing specific failure cases way more manual than it should've been.
 
-The load tests also showed me the difference between application design and deployment limits. With enough concurrent checkout traffic in the local Docker setup, the web container eventually died from memory pressure instead of continuing to emit clean classified failures. That does not mean nopCommerce cannot scale. It means this specific instrumented local setup hits a hard resource limit quickly. From an observability point of view, that matters because once the process is dead, the nice in-process telemetry is gone too. At that point I had to look at container state and logs, not just traces and metrics.
+The load tests also taught me that application design and actual deployment limits are different things. When I pushed enough concurrent checkout traffic through the local Docker setup, the web container just died from running out of memory instead of gracefully handling failures. That doesn't mean nopCommerce can't scale - it means my local setup with instrumentation and everything hit a wall. From an observability perspective, that's a problem because once the process is dead, all the nice telemetry is gone too. At that point I'm just looking at Docker logs and trying to figure out what happened.
 
-## What I Would Change Going Forward, and the Cost
+## What I'd Change If I Kept Going
 
-If I were continuing this work, I would keep observability as an infrastructure concern instead of letting it leak into random business services.
+If I had to keep working on this, I'd definitely try to keep observability stuff in the infrastructure layer and not let it bleed into all the business logic.
 
-The decorator around `IOrderProcessingService` worked well because it gave me one clean root span for checkout. I would keep that pattern for other important workflows instead of making observability depend on knowledge of one big service class. The cost is moderate: more wrappers, more DI registrations, and a bit more testing. The benefit is that the business logic stays cleaner.
+The decorator pattern I used for `IOrderProcessingService` worked really well. It gave me one clean root span for the whole checkout flow without having to mess with the actual service code too much. I'd probably use that same approach for other important flows instead of trying to instrument inside big service classes. The tradeoff is you end up with more wrapper classes and more DI registrations to manage, but the business logic stays way cleaner.
 
-I would also keep the split between shared telemetry primitives and feature-specific telemetry policy. Having a general `NopTelemetry` plus a more focused `CheckoutTelemetry` is much better than trying to dump every tag and metric name into one shared helper. If observability later expands into search, catalog, pricing, or admin flows, each area should have its own small telemetry module. The cost is mostly organization. The benefit is that the observability code does not turn into a giant global bucket of constants.
+I'd also keep the split between `NopTelemetry` and `CheckoutTelemetry`, but not just because it keeps things tidier. The real benefit is separation of responsibility. `NopTelemetry` holds the shared observability primitives used across the application, while `CheckoutTelemetry` defines the checkout-specific vocabulary: metric names, tags, and helper methods that only make sense for that flow. That keeps the generic telemetry layer from getting coupled to one feature and makes it much easier to extend observability later for something like catalog or search without polluting the shared infrastructure with checkout-specific concepts.
 
-I would also make operational settings and failure-injection paths easier to control from supported configuration surfaces. During this assignment I sometimes had to work around how configuration is exposed just to reproduce certain behaviors. In a real system, that becomes an operational problem. If operators cannot easily reproduce a failure mode, it is much harder to validate whether the telemetry is actually useful. The cost there is extra UI and mapping work, but the result is a system that is easier to test and operate.
+The configuration thing is something I'd definitely want to fix. Like I mentioned before, some settings are kind of hidden and hard to change through the normal admin UI. During this assignment I had to edit config files or even write SQL to trigger certain failures. That's fine for a school project but in a real system, if operators can't easily reproduce failure scenarios, they can't really validate if the observability is working. You'd need to add proper UI for these settings, which is more work, but it would make the system way more testable.
 
-I also think the logging story matters. I added basic trace-log correlation, which makes it easier to move from an error log to the trace that produced it. That said, I still would not call the logging side fully mature. It is better than before, but traces and metrics are still the stronger part of this implementation.
+The logging side is... okay. I added basic correlation between traces and logs so you can go from an error in the logs to the actual trace, which helps. But I wouldn't say logging is as mature as the traces and metrics. It's better than nothing, but there's room for improvement.
 
-One good lesson from the metric work is that not every metric that sounds good on paper is actually good in practice. I originally added an inflight checkout metric because it seemed like a useful early pressure signal. In reality, it was too narrow and too dependent on scrape timing to be helpful in this setup. Most of the time it showed zero and did not tell a clear story. I removed it and kept the metrics that were easier to interpret under load. That was a good reminder that a metric is only valuable if someone can look at it and know what it means.
+Oh, and one thing I learned the hard way: not every metric that sounds good in theory is actually useful. I originally added a metric for in-flight checkouts because I thought it would be a good early warning signal for pressure on the system. Turns out it was pretty useless in practice - most of the time it just showed zero because checkout is fast and Prometheus scrapes at intervals. It didn't tell a clear story so I got rid of it. Good reminder that metrics are only valuable if they actually help you understand what's happening.
 
-## Metric Design Evolution
+## How the Metrics Evolved
 
-One of the biggest improvements I made during the implementation was moving away from a simple failure counter and toward `nop.checkout.stage_completions_total`.
+One of the bigger changes I made was replacing the simple failure counter with `nop.checkout.stage_completions_total`. This was actually a pretty significant improvement.
 
-The original failure counter could tell me that checkout was failing, but not much more than that. It was reactive. I would only see the problem after it was already affecting users.
+The original failure counter was super basic - it just told me "checkout is failing" but that's about it. It was totally reactive. By the time I saw failures in the metric, users were already having problems.
 
-The stage completions metric is much more useful because it tracks both success and failure for each stage. That makes it possible to calculate stage success rate and spot degradation earlier. For example, I can see the payment stage slipping before the overall flow looks completely broken. That is a much better signal for an operator.
+The stage completions metric is way better because it tracks both successes AND failures for each checkout stage. That means I can actually calculate success rates per stage and catch problems earlier. Like, I can see the payment stage starting to slip from 100% to 99% to 98% before the whole checkout flow looks completely broken. That's a way better early warning signal.
 
-It also gives much better context. Instead of just seeing "checkout is failing," I can see that payment is degrading while persist order is still healthy, or that failures are mostly concentrated in a later stage. That narrows down the next place to investigate much faster.
+It also gives way more context. Instead of just "checkout is broken," I can see stuff like "payment stage is at 97% success but persist_order is still at 100%." That tells me way more about where to look. If I see failures concentrated in one specific stage, that immediately narrows down what to investigate.
 
-I think this change fits the assignment well because the brief explicitly asks for metrics that are operationally useful. A metric that only tells me the system is already broken is fine, but a metric that shows degradation while there is still time to react is better.
+I think this fits what the assignment was asking for - metrics that are actually operationally useful, not just numbers. A metric that only tells you things are already on fire is okay I guess, but a metric that shows things starting to degrade while you can still do something about it is way better.
 
-The cost of this change was small. The system was already incrementing counters; the real difference was choosing a metric shape that gave better information. That was a useful reminder that metric design matters more than just collecting more numbers.
+The funny thing is this wasn't even that hard to change. The code was already incrementing counters, I just had to think about what shape would give better information. Good reminder that how you design metrics matters more than just collecting a ton of data.
 
-## Dashboard Organization and Iteration
+## Dashboard Changes
 
-The dashboard changed quite a bit once I started using it with real traffic. A few things looked fine in theory and then turned out not to be very helpful in practice.
+The dashboard went through a bunch of iterations once I actually started using it with real traffic. Some stuff that looked good on paper turned out to be not that useful in practice.
 
-The first big change was removing panels that did not really help tell the story. The best example was the inflight checkout panel. It was technically valid, but in this environment it sat at zero most of the time because checkout requests were fast and Prometheus scraped at intervals. Replacing it with median checkout time made the dashboard much easier to read.
+The biggest change was cutting panels that didn't actually help. The inflight checkout panel is the best example - it was technically correct, but it just sat at zero most of the time because checkouts are fast and Prometheus only scrapes every so often. Replacing that with median checkout time made the dashboard way more useful.
 
-Another improvement was moving from totals to rates where that made more sense. A total over the selected time range can be misleading because it changes meaning depending on the dashboard window. A rate is easier to compare at a glance and gives a better sense of whether throughput is dropping right now.
+Another thing I changed was using rates instead of totals where it made sense. Like, showing "total successful checkouts in the selected time range" is kind of useless because the number changes meaning depending on how big your time window is. Showing checkouts per second is way easier to understand and actually tells you if throughput is dropping.
 
-I also made stage success rate much more visible. That panel ended up being important because it gives early warning before the top-level error rate becomes obviously bad. It is one of the panels I would look at first during an incident.
+I also made the stage success rate panel way more prominent. That one ended up being super important because it gives you early warning before the overall error rate looks really bad. It's definitely one of the first things I'd check if something was going wrong.
 
-The final layout follows the way I would actually investigate a problem:
+The way I organized the dashboard follows how I'd actually debug a problem:
 
-- first, detect whether something is wrong now
-- then see which part of checkout is degrading
-- then look at failures and trends
-- finally open traces for detail
+- First, is something broken right now?
+- Which part of checkout is having issues?
+- What failures are happening and when did they start?
+- Finally, let me look at some actual traces
 
-That structure made the dashboard feel less like a collection of graphs and more like a workflow.
+I kept the stage filter because it was actually useful when I wanted to focus on one part of the checkout flow without rewriting queries. I ended up removing the interval filter though. It sounded flexible in theory, but in practice it just added noise to the dashboard. Fixing the Prometheus window to a sensible default made the panels easier to read and made the whole dashboard feel more stable during demos and testing.
 
-I also kept template variables for stage and interval so I could narrow the view without editing queries. That made the dashboard much more practical during testing.
+Main takeaway: dashboards shouldn't just be technically correct, they should actually help you make decisions. If a panel doesn't help answer "what's wrong?" or "what should I check next?", it probably doesn't need to be there.
 
-The main lesson for me here was that a dashboard should not just be technically correct. It should help someone make a decision. If a panel does not help answer "what is wrong?" or "what should I look at next?", it probably does not deserve space on the screen.
+## The Most Important Change
 
-## The Surgical Change
+The biggest single change I made was probably the decorator around `IOrderProcessingService` to create that root checkout span. The built-in ASP.NET Core instrumentation could show me the HTTP request and some database activity, but it couldn't really show the business concept that matters: "placing an order."
 
-The most important surgical change I made was the decorator around `IOrderProcessingService` to create the root checkout span. I needed that because the built-in instrumentation could show the HTTP request and some downstream activity, but it could not express the business-level unit that actually matters: placing an order.
+I thought about putting that span in the controller, but that felt too tied to the web layer. And pushing observability logic deep into the service code would've been way too invasive. The decorator was the sweet spot - it sits at a natural boundary and doesn't mess with the actual service interface.
 
-Putting that root span in the controller would have made the tracing too tied to the presentation layer. Pushing exporter-specific logic deep into service code would have been too invasive. The decorator was the cleanest middle ground because it sat at a good boundary and kept the service contract intact.
+I did have to add some instrumentation directly inside `OrderProcessingService` though. That was kind of a compromise. The internal checkout stages (prepare, payment, persist, move items, finalize) don't have cleaner boundaries I could hook into, so if I wanted visibility into each stage I had to instrument from inside the service. I kept it pretty coarse on purpose though - I tracked the major stages instead of trying to trace every single helper method. That gave enough structure to be useful without turning the whole service into tracing code.
 
-I still had to add some instrumentation inside `OrderProcessingService` itself. That was the second compromise. The internal checkout stages do not have cleaner external seams right now, so if I wanted stage-level visibility I had to instrument inside the service. I kept that coarse on purpose. I tracked stages like prepare, payment, persist order, move items, and finalize instead of trying to trace every helper method. That gave useful structure without turning the service into tracing code.
+The privacy stuff was another place where I tried to be surgical about it. Instead of trying to remember at every single call site which fields were safe to export, I just added one central sanitizing processor that runs before anything gets sent to the collector. That's the kind of rule that should live in one place - way easier to maintain and way less error-prone.
 
-The privacy work was another intentional surgical choice. Instead of trying to remember at every call site which fields were safe, I added a central sanitizing processor before export. That is the kind of rule that should live in one place. It is easier to maintain and much less error-prone.
-
-Overall, I think nopCommerce was instrumentable without a large redesign because the service layer, repository boundary, and event publisher are all strong seams. At the same time, this assignment made it clear to me that "layered" does not automatically mean "observability-ready." Checkout still spreads across controllers, services, plugins, and runtime configuration. The reason my changes worked is that I kept them small and placed them at boundaries that were already meaningful.
+Overall, I think nopCommerce was actually pretty instrumentable without having to redesign everything, mostly because the service layer, repository, and event publisher are already good boundaries. But this assignment also showed me that "layered architecture" doesn't automatically mean "observability-ready." Checkout still spreads across controllers, services, plugins, and config. The reason my changes worked is because I kept them small and put them at boundaries that already existed and made sense.

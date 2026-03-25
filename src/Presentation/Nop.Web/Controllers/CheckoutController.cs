@@ -1317,7 +1317,7 @@ public partial class CheckoutController : BasePublicController
             //prevent 2 orders being placed within an X seconds time frame
             if (!await IsMinimumOrderPlacementIntervalValidAsync(customer))
             {
-                RecordCheckoutRequestFailure("prepare", "minimum_interval");
+                RecordCheckoutRequestFailure("prepare", "minimum_interval", subsystem: CheckoutTelemetry.SubsystemOrderProcessing);
                 throw new Exception(await _localizationService.GetResourceAsync("Checkout.MinOrderPlacementInterval"));
             }
 
@@ -1532,9 +1532,6 @@ public partial class CheckoutController : BasePublicController
     {
         try
         {
-            // Record checkout attempt for funnel tracking
-            CheckoutTelemetry.RecordStageAttempt("prepare", CheckoutTelemetry.ModeOpc);
-
             //validation
             if (_orderSettings.CheckoutDisabled)
                 throw new Exception(await _localizationService.GetResourceAsync("Checkout.Disabled"));
@@ -2069,7 +2066,7 @@ public partial class CheckoutController : BasePublicController
                 //prevent 2 orders being placed within an X seconds time frame
                 if (!await IsMinimumOrderPlacementIntervalValidAsync(customer))
                 {
-                    RecordCheckoutRequestFailure("prepare", "minimum_interval");
+                    RecordCheckoutRequestFailure("prepare", "minimum_interval", subsystem: CheckoutTelemetry.SubsystemOrderProcessing);
                     throw new Exception(await _localizationService.GetResourceAsync("Checkout.MinOrderPlacementInterval"));
                 }
 
