@@ -5,7 +5,10 @@ using Nop.Core;
 using Nop.Core.Caching;
 using Nop.Core.Configuration;
 using Nop.Core.Domain.Common;
+using Nop.Core.Domain.Customers;
+using Nop.Core.Domain.Discounts;
 using Nop.Core.Domain.Orders;
+using Nop.Core.Domain.Shipping;
 using Nop.Core.Events;
 using Nop.Core.Observability;
 
@@ -356,8 +359,16 @@ public partial class EntityRepository<TEntity> : IRepository<TEntity> where TEnt
     {
         return typeof(TEntity) switch
         {
+            var type when type == typeof(Address) => "address",
+            var type when type == typeof(GenericAttribute) => "generic_attribute",
+            var type when type == typeof(DiscountUsageHistory) => "discount_usage_history",
+            var type when type == typeof(GiftCardUsageHistory) => "gift_card_usage_history",
             var type when type == typeof(Order) => "order",
             var type when type == typeof(OrderItem) => "order_item",
+            var type when type == typeof(OrderNote) => "order_note",
+            var type when type == typeof(RewardPointsHistory) => "reward_points_history",
+            var type when type == typeof(Shipment) => "shipment",
+            var type when type == typeof(ShipmentItem) => "shipment_item",
             var type when type == typeof(ShoppingCartItem) => "shopping_cart",
             _ => "other"
         };
