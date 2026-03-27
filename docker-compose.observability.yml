@@ -13,7 +13,7 @@ services:
       - "4318:4318"
       - "8889:8889"
     volumes:
-      - ./observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./assessment/observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
 
   tempo:
     image: grafana/tempo:2.10.1
@@ -22,7 +22,7 @@ services:
     ports:
       - "3200:3200"
     volumes:
-      - ./observability/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - ./assessment/observability/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
       - tempo-data:/tmp/tempo
 
   grafana:
@@ -36,9 +36,9 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
-      - ./observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./assessment/observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./assessment/observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./assessment/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
 
   prometheus:
@@ -48,7 +48,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./assessment/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
 
 volumes:
   grafana-data:

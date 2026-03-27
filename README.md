@@ -6,8 +6,9 @@ OpenTelemetry instrumentation for nopCommerce, focused on the flow:
 
 This repository contains:
 - architecture analysis: `ANALYSIS.md`
+- observability report: `report.md`
 - critique: `CRITIQUE.md`
-- load test scripts: `loadtests/k6/*.js`
+- load test scripts: `assessment/load-test/k6/*.js`
 - observability stack: `docker-compose.observability.yml`
 
 Assessment assets are grouped under `assessment/`:
@@ -109,12 +110,12 @@ Default admin credentials:
 
 ## 5) Selected Flow Diagram
 
-![Checkout Flow](docs/diagrams/checkout-flow.svg)
+![Checkout Flow](assessment/diagrams/checkout-flow.svg)
 
 
 ### 5.1) Observability Architecture Diagram
 
-![Observability Architecture](docs/diagrams/observability-architecture.drawio.png)
+![Observability Architecture](assessment/diagrams/observability-architecture.png)
 
 
 ---
@@ -175,7 +176,12 @@ The implementation tracks these OpenTelemetry metrics:
 
 ## 8) Run Load Tests
 
-The repository includes a primary checkout load test and a few supporting scenarios using k6. The main goal is to exercise the backend order-placement flow after `Confirm Order`, not model UI abandonment.
+The repository includes a few load-test scenarios, but there are **two main runs** to use for the assignment/demo:
+
+1. **Normal checkout load with 15 VUs** using `assessment/load-test/k6/checkout-observability.js`
+2. **Multi-error failure demo** using `scripts/run-min-subtotal-load.sh`, which drives several controlled business failures so the dashboard shows different error types
+
+The main goal is to exercise the backend order-placement flow after `Confirm Order`, not model UI abandonment.
 
 ### Quick Smoke Test (1 iteration)
 
@@ -185,17 +191,17 @@ Verify the checkout flow works end-to-end:
 docker run --rm --network host \
   -e BASE_URL=http://localhost \
   -e PAYMENT_METHOD=Payments.Manual \
-  -v "$(pwd)/loadtests/k6:/scripts" \
+  -v "$(pwd)/assessment/load-test/k6:/scripts" \
   grafana/k6:0.49.0 run --vus 1 --iterations 1 /scripts/checkout-observability.js
 ```
 
 ---
 
-### Primary Load Test
+### Main Load Test: Normal Checkout (15 VUs)
 
-**File:** `loadtests/k6/checkout-observability.js`
+**File:** `assessment/load-test/k6/checkout-observability.js`
 
-This is the main load test for the dashboard and demo. It drives the normal one-page checkout flow until `OpcConfirmOrder`, which then exercises `OrderProcessingService.PlaceOrderAsync` and the internal backend stages.
+This is the main happy-path load test for the dashboard and demo. It drives the normal one-page checkout flow until `OpcConfirmOrder`, which then exercises `OrderProcessingService.PlaceOrderAsync` and the internal backend stages. The key target is the **15 VU stage**.
 
 ```bash
 docker run --rm --network host \
@@ -210,7 +216,7 @@ docker run --rm --network host \
   -e K6_STAGE_3_TARGET=15 \
   -e K6_STAGE_4_DURATION=30s \
   -e K6_STAGE_4_TARGET=0 \
-  -v "$(pwd)/loadtests/k6:/scripts" \
+  -v "$(pwd)/assessment/load-test/k6:/scripts" \
   grafana/k6:0.49.0 run /scripts/checkout-observability.js
 ```
 
@@ -225,15 +231,44 @@ docker run --rm --network host \
 - `nop.checkout.stage_duration_ms`
 - `nop.checkout.stage_completions_total`
 
-This is the **primary test for demonstrating the observability dashboard** because it aligns directly with the metrics and traces being analyzed.
+This is the **main normal-load test** because it aligns directly with the metrics and traces being analyzed and gives the cleanest 15 VU baseline.
 
 ---
 
-### Controlled Business Failure Test
+### Main Failure Test: Different Error Types
 
-**File:** `loadtests/k6/checkout-business-failure.js`
+**Script:** `scripts/run-min-subtotal-load.sh`
 
-This test uses a **product configured to fail validation** (e.g., out of stock, minimum order subtotal not met):
+This is the main failure-demo run. It updates nopCommerce settings between phases and then executes multiple controlled failure scenarios so the dashboard captures **different business errors** instead of only one failure mode.
+
+It covers:
+
+- minimum order subtotal failures
+- minimum order interval failures
+- minimum order total failures
+
+Run it from the repository root:
+
+```bash
+bash ./scripts/run-min-subtotal-load.sh
+```
+
+What it demonstrates:
+
+- multiple classified checkout failures in one run
+- clearer `reason_code` and `subsystem` variety in Grafana
+- failure trends while the application stays alive
+- a better demo for "different errors" than a single low-noise failure script
+
+The script internally uses the failure-oriented k6 scenarios under `assessment/load-test/k6/`, including `checkout-subtotal-failure.js`, `checkout-observability-steady.js`, and `checkout-business-failure.js`.
+
+---
+
+### Supporting Single Failure Scenario
+
+**File:** `assessment/load-test/k6/checkout-business-failure.js`
+
+This supporting test uses a **product configured to fail validation** (for example, out of stock or a minimum-order rule violation):
 
 ```bash
 docker run --rm --network host \
@@ -243,7 +278,7 @@ docker run --rm --network host \
   -e K6_FIXED_VUS=1 \
   -e K6_FIXED_DURATION=3m \
   -e THINK_TIME_SECONDS=2 \
-  -v "$(pwd)/loadtests/k6:/scripts" \
+  -v "$(pwd)/assessment/load-test/k6:/scripts" \
   grafana/k6:0.49.0 run /scripts/checkout-business-failure.js
 ```
 
@@ -258,7 +293,7 @@ docker run --rm --network host \
 - Subsystem attribution (`subsystem` label)
 - Clean failure patterns in dashboard
 
-This test is ideal for demonstrating **how the observability system classifies and tracks specific failure types**.
+This supporting test is useful when you want one isolated failure pattern instead of the multi-phase error demo above.
 
 ---
 
@@ -293,49 +328,68 @@ The dashboard includes these panels:
 
 ### Dashboard Variables
 
-The dashboard includes one template variable for filtering:
+The dashboard includes two template variables:
 - **`$stage`**: Filter by stage (prepare, payment, persist_order, move_items, finalize, or All)
+- **`$stage_latency_quantile`**: Select the percentile shown in the stage-latency panel (`p95` or `p50`)
 
-Dashboard summary panels use the selected Grafana time range, and time-series panels use Grafana's `$__rate_interval`.
+Stat panels use the selected Grafana time range, and time-series panels use a fixed `1m` rate window in the provisioned dashboard.
 
 ---
 
-## 10) Key Prometheus Queries
+## 10) Prometheus Queries
 
-### Checkout Failure Rate
+### Checkout Failure Rate (%)
 
 ```promql
-100 * sum(increase(nop_checkout_stage_completions_total{outcome="failure"}[$__range]))
-  / clamp_min(
-      sum(increase(nop_checkout_completion_time_ms_milliseconds_count{outcome="success"}[$__range]))
-      + sum(increase(nop_checkout_stage_completions_total{outcome="failure"}[$__range])),
-      0.000001
-    )
+(100 * sum(increase(nop_checkout_stage_completions_total{outcome="failure"}[$__range])) / clamp_min(sum(increase(nop_checkout_completion_time_ms_milliseconds_count{outcome="success"}[$__range])) + sum(increase(nop_checkout_stage_completions_total{outcome="failure"}[$__range])), 0.000001)) or on() vector(0)
 ```
 
 ### Checkout Completion Latency p95
 
 ```promql
-histogram_quantile(0.95, sum(increase(nop_checkout_completion_time_ms_milliseconds_bucket[$__range])) by (le))
+histogram_quantile(0.95, sum(increase(nop_checkout_completion_time_ms_milliseconds_bucket[$__range])) by (le)) or on() vector(0)
 ```
 
-### Checkouts In Range
+### Checkout Completion Latency p50
 
 ```promql
-sum(increase(nop_checkout_completion_time_ms_milliseconds_count{outcome="success"}[$__range]))
-  + sum(increase(nop_checkout_stage_completions_total{outcome="failure"}[$__range]))
+histogram_quantile(0.50, sum(increase(nop_checkout_completion_time_ms_milliseconds_bucket[$__range])) by (le)) or on() vector(0)
 ```
 
-### Repository Write Latency p95
+### Completed Checkouts In Range
 
 ```promql
-histogram_quantile(0.95, sum by (le, operation, entity_group) (rate(nop_checkout_repository_write_duration_ms_milliseconds_bucket[$__rate_interval])))
+(sum(increase(nop_checkout_completion_time_ms_milliseconds_count{outcome="success"}[$__range])) + sum(increase(nop_checkout_stage_completions_total{outcome="failure"}[$__range]))) or on() vector(0)
 ```
 
-### Stage-Specific Latency
+### Checkout Repository Write Latency p95
 
 ```promql
-histogram_quantile(0.95, sum by (stage, le) (rate(nop_checkout_stage_duration_ms_milliseconds_bucket[$__rate_interval])))
+histogram_quantile(0.95, sum by (le, operation, entity_group) (rate(nop_checkout_repository_write_duration_ms_milliseconds_bucket[1m])))
+```
+
+### Checkout Stage Latency (`${stage_latency_quantile:text}`)
+
+```promql
+histogram_quantile(${stage_latency_quantile:raw}, sum by (le, stage) (rate(nop_checkout_stage_duration_ms_milliseconds_bucket{stage=~"$stage"}[1m])))
+```
+
+### Successful vs Failed Completions Over Time
+
+```promql
+sum by (outcome) (rate(nop_checkout_completion_time_ms_milliseconds_count{outcome=~"success|failure"}[1m]))
+```
+
+### Checkout Failure Rate Over Time
+
+```promql
+(100 * sum(rate(nop_checkout_stage_completions_total{outcome="failure"}[1m])) / clamp_min(sum(rate(nop_checkout_completion_time_ms_milliseconds_count{outcome="success"}[1m])) + sum(rate(nop_checkout_stage_completions_total{outcome="failure"}[1m])), 0.000001)) or on() vector(0)
+```
+
+### Checkout Failures by Reason Code
+
+```promql
+sum by (reason_code) (increase(nop_checkout_stage_completions_total{outcome="failure",reason_code=~".+"}[$__range]))
 ```
 
 ---
@@ -354,3 +408,23 @@ Traces are automatically exported to Tempo and can be viewed in Grafana:
 Or use the **Latest Checkout Traces** panel in the dashboard for quick access.
 
 Example trace structure:
+
+```text
+POST /checkout/OpcConfirmOrder
+└── nop.checkout.place_order
+    ├── nop.checkout.prepare
+    ├── nop.checkout.payment
+    ├── nop.checkout.persist_order
+    │   └── nop.repository.*
+    ├── nop.checkout.move_items
+    └── nop.checkout.finalize
+        └── nop.event.publish
+```
+
+Trace opened in Grafana Explore:
+
+![Checkout Trace Detail](assessment/dashboards/screenshots/Dashboard_Screenshot_6.png)
+
+Nested repository and event spans inside the same trace:
+
+![Checkout Trace Nested Spans](assessment/dashboards/screenshots/Dashboard_Screenshot_7.png)

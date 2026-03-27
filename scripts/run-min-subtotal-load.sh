@@ -29,6 +29,7 @@ FAILURE_ADD_TO_CART_PATH="${FAILURE_ADD_TO_CART_PATH:-/addproducttocart/catalog/
 CHECKOUT_COUNTRY_ID="${CHECKOUT_COUNTRY_ID:-}"
 CHECKOUT_STATE_ID="${CHECKOUT_STATE_ID:-}"
 WORKDIR="${WORKDIR:-$(pwd)}"
+K6_SCRIPTS_DIR="${K6_SCRIPTS_DIR:-${WORKDIR}/assessment/load-test/k6}"
 
 bool_to_sql() {
   local value="${1,,}"
@@ -113,7 +114,7 @@ docker run --rm --network host \
   ${ADD_TO_CART_PATH:+-e ADD_TO_CART_PATH="${ADD_TO_CART_PATH}"} \
   ${CHECKOUT_COUNTRY_ID:+-e CHECKOUT_COUNTRY_ID="${CHECKOUT_COUNTRY_ID}"} \
   ${CHECKOUT_STATE_ID:+-e CHECKOUT_STATE_ID="${CHECKOUT_STATE_ID}"} \
-  -v "${WORKDIR}/loadtests/k6:/scripts" \
+  -v "${K6_SCRIPTS_DIR}:/scripts" \
   "${K6_IMAGE}" run /scripts/checkout-subtotal-failure.js
 
 echo "Phase 2: setting minimum order subtotal to 0, minimum order total to 0, and minimum interval to ${MIN_INTERVAL_VALUE}..."
@@ -135,7 +136,7 @@ docker run --rm --network host \
   -e ADD_TO_CART_PATH="${REALISTIC_ADD_TO_CART_PATH}" \
   ${CHECKOUT_COUNTRY_ID:+-e CHECKOUT_COUNTRY_ID="${CHECKOUT_COUNTRY_ID}"} \
   ${CHECKOUT_STATE_ID:+-e CHECKOUT_STATE_ID="${CHECKOUT_STATE_ID}"} \
-  -v "${WORKDIR}/loadtests/k6:/scripts" \
+  -v "${K6_SCRIPTS_DIR}:/scripts" \
   "${K6_IMAGE}" run /scripts/checkout-observability-steady.js
 
 echo "Phase 3: setting minimum order subtotal to 0, minimum order total to ${MIN_TOTAL_VALUE}, and minimum interval to 0..."
@@ -157,5 +158,5 @@ docker run --rm --network host \
   -e ADD_TO_CART_PATH="${FAILURE_ADD_TO_CART_PATH}" \
   ${CHECKOUT_COUNTRY_ID:+-e CHECKOUT_COUNTRY_ID="${CHECKOUT_COUNTRY_ID}"} \
   ${CHECKOUT_STATE_ID:+-e CHECKOUT_STATE_ID="${CHECKOUT_STATE_ID}"} \
-  -v "${WORKDIR}/loadtests/k6:/scripts" \
+  -v "${K6_SCRIPTS_DIR}:/scripts" \
   "${K6_IMAGE}" run /scripts/checkout-business-failure.js

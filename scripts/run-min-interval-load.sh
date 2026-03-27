@@ -19,6 +19,7 @@ ADD_TO_CART_PATH="${ADD_TO_CART_PATH:-}"
 CHECKOUT_COUNTRY_ID="${CHECKOUT_COUNTRY_ID:-}"
 CHECKOUT_STATE_ID="${CHECKOUT_STATE_ID:-}"
 WORKDIR="${WORKDIR:-$(pwd)}"
+K6_SCRIPTS_DIR="${K6_SCRIPTS_DIR:-${WORKDIR}/assessment/load-test/k6}"
 
 update_min_interval() {
   local value="$1"
@@ -74,5 +75,5 @@ docker run --rm --network host \
   ${ADD_TO_CART_PATH:+-e ADD_TO_CART_PATH="${ADD_TO_CART_PATH}"} \
   ${CHECKOUT_COUNTRY_ID:+-e CHECKOUT_COUNTRY_ID="${CHECKOUT_COUNTRY_ID}"} \
   ${CHECKOUT_STATE_ID:+-e CHECKOUT_STATE_ID="${CHECKOUT_STATE_ID}"} \
-  -v "${WORKDIR}/loadtests/k6:/scripts" \
+  -v "${K6_SCRIPTS_DIR}:/scripts" \
   "${K6_IMAGE}" run /scripts/checkout-observability-steady.js
